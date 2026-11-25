@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* Modo Claro — Caderno Editorial Cozy */
+  --bg-canvas: #FAF8F5;
+  --bg-card: #FFFFFF;
+  --bg-subtle: #F4EFE8;
+  --bg-hover: #EFEAE1;
+  --border-hairline: #E8E4DC;
+  --border-strong: #D9D3C7;
+  --text-primary: #23211E;
+  --text-secondary: #787269;
+  --text-muted: #999287;
+
+  /* Acentos foscos */
+  --accent-sage: #5F7A61;
+  --accent-sage-hover: #536C55;
+  --accent-sage-soft: rgba(95, 122, 97, 0.11);
+  --accent-terracotta: #C46D53;
+  --accent-terracotta-soft: rgba(196, 109, 83, 0.12);
+  --accent-slate: #567189;
+  --accent-slate-soft: rgba(86, 113, 137, 0.12);
+  --accent-ochre: #C99A4E;
+  --accent-ochre-soft: rgba(201, 154, 78, 0.14);
+
+  --shadow-tactile: 0 4px 12px rgba(35, 33, 30, 0.05);
+}
+
+.dark {
+  /* Modo Escuro — Carvão Quente */
+  --bg-canvas: #181715;
+  --bg-card: #21201D;
+  --bg-subtle: #282622;
+  --bg-hover: #2F2D28;
+  --border-hairline: #302E29;
+  --border-strong: #403D37;
+  --text-primary: #ECE9E2;
+  --text-secondary: #A39E93;
+  --text-muted: #7C776E;
+
+  /* Acentos foscos levemente ajustados para legibilidade em carvão quente */
+  --accent-sage: #739275;
+  --accent-sage-hover: #81A083;
+  --accent-sage-soft: rgba(115, 146, 117, 0.15);
+  --accent-terracotta: #D37D63;
+  --accent-terracotta-soft: rgba(211, 125, 99, 0.16);
+  --accent-slate: #708DA8;
+  --accent-slate-soft: rgba(112, 141, 168, 0.16);
+  --accent-ochre: #D6AA62;
+  --accent-ochre-soft: rgba(214, 170, 98, 0.16);
+
+  --shadow-tactile: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+
+@theme inline {
+  --font-serif: var(--font-newsreader), Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-plus-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-canvas: var(--bg-canvas);
+  --color-card: var(--bg-card);
+  --color-subtle: var(--bg-subtle);
+  --color-hover: var(--bg-hover);
+  --color-hairline: var(--border-hairline);
+  --color-ink: var(--text-primary);
+  --color-ink-secondary: var(--text-secondary);
+  --color-ink-muted: var(--text-muted);
+
+  --color-sage: var(--accent-sage);
+  --color-terracotta: var(--accent-terracotta);
+  --color-slate-accent: var(--accent-slate);
+  --color-ochre: var(--accent-ochre);
+}
+
+@layer base {
+  html,
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-plus-jakarta), -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    border-color: var(--border-hairline);
+  }
+}
+
+.font-editorial {
+  font-family: var(--font-newsreader), Georgia, serif;
+}
+
+.font-mono-tabular {
+  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Textura sutil de papel para o banner padrão (sem gradientes neon) */
+.editorial-paper-banner {
+  background-color: #EFE8DC;
+  background-image:
+    radial-gradient(circle at 20% 25%, rgba(95, 122, 97, 0.10) 0%, transparent 55%),
+    radial-gradient(circle at 82% 72%, rgba(201, 154, 78, 0.12) 0%, transparent 52%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(35, 33, 30, 0.025) 0px,
+      rgba(35, 33, 30, 0.025) 1px,
+      transparent 1px,
+      transparent 28px
+    );
+}
+
+.dark .editorial-paper-banner {
+  background-color: #25231F;
+  background-image:
+    radial-gradient(circle at 20% 25%, rgba(115, 146, 117, 0.14) 0%, transparent 55%),
+    radial-gradient(circle at 82% 72%, rgba(214, 170, 98, 0.10) 0%, transparent 52%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(236, 233, 226, 0.035) 0px,
+      rgba(236, 233, 226, 0.035) 1px,
+      transparent 1px,
+      transparent 28px
+    );
+}
