@@ -159,7 +159,7 @@ export function SubjectFormModal({
                 {color}
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div className="grid grid-cols-6 gap-2.5 pt-0.5">
               {SUBJECT_COLOR_OPTIONS.map((opt) => {
                 const selected =
                   color.toLowerCase() === opt.hex.toLowerCase();
@@ -170,10 +170,10 @@ export function SubjectFormModal({
                     onClick={() => setColor(opt.hex)}
                     title={opt.label}
                     aria-label={opt.label}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-transform cursor-pointer ${
+                    className={`h-9 rounded-xl flex items-center justify-center transition-transform cursor-pointer ${
                       selected
-                        ? "ring-2 ring-offset-2 ring-offset-[var(--bg-card)] ring-[var(--text-primary)] scale-105"
-                        : "hover:scale-105"
+                        ? "ring-2 ring-offset-2 ring-offset-[var(--bg-card)] ring-[var(--text-primary)] scale-[1.04]"
+                        : "hover:scale-[1.04]"
                     }`}
                     style={{ backgroundColor: opt.hex }}
                   >
@@ -183,20 +183,6 @@ export function SubjectFormModal({
                   </button>
                 );
               })}
-
-              {/* Cor personalizada opcional */}
-              <label
-                title="Escolher outra cor"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-subtle)] text-[11.5px] text-[var(--text-secondary)] cursor-pointer hover:bg-[var(--bg-hover)]"
-              >
-                <input
-                  type="color"
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                  className="w-4 h-4 rounded border-0 bg-transparent cursor-pointer"
-                />
-                <span>Outra</span>
-              </label>
             </div>
           </div>
 

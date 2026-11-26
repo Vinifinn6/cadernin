@@ -73,18 +73,5 @@ export function getSubjectIcon(iconName: string): SubjectIconComponent {
   return ICON_MAP[iconName] ?? BookOpen;
 }
 
-export interface EditorialColorOption {
-  hex: string;
-  label: string;
-}
-
-export const SUBJECT_COLOR_OPTIONS: EditorialColorOption[] = [
-  { hex: "#5F7A61", label: "Verde Sálvia" },
-  { hex: "#567189", label: "Azul Ardósia" },
-  { hex: "#C46D53", label: "Terracota" },
-  { hex: "#C99A4E", label: "Ocre Suave" },
-  { hex: "#7E5A6E", label: "Ameixa Fosca" },
-  { hex: "#4D6E68", label: "Verde Musgo" },
-  { hex: "#9E634B", label: "Argila" },
-  { hex: "#6B655D", label: "Grafite Quente" },
-];
+export { EDITORIAL_SWATCHES as SUBJECT_COLOR_OPTIONS } from "@/lib/editorialPalette";
+export type { EditorialSwatch as EditorialColorOption } from "@/lib/editorialPalette";

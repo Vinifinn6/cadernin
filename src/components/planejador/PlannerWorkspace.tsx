@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { motion } from "framer-motion";
 import {
   ArrowsLeftRight,
   CalendarBlank,
@@ -427,8 +428,9 @@ export function PlannerWorkspace() {
                               className="p-2.5 rounded-xl bg-[var(--bg-subtle)]/75 border border-[var(--border-hairline)]/70 space-y-2"
                             >
                               <div className="flex items-start gap-2.5">
-                                <button
+                                <motion.button
                                   type="button"
+                                  whileTap={{ scale: 0.86 }}
                                   onClick={() => void handleToggleItem(item)}
                                   aria-label={
                                     item.is_completed
@@ -444,7 +446,7 @@ export function PlannerWorkspace() {
                                   {item.is_completed && (
                                     <Check size={10} weight="bold" />
                                   )}
-                                </button>
+                                </motion.button>
 
                                 <div className="min-w-0 flex-1">
                                   <p

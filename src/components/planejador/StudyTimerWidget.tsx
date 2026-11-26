@@ -9,10 +9,17 @@ import {
   Pause,
   Play,
   Plus,
+  SpeakerHigh,
+  SpeakerSlash,
   SpinnerGap,
   Trash,
   X,
 } from "@phosphor-icons/react";
+import {
+  isFocusChimeMuted,
+  playFocusChime,
+  setFocusChimeMuted,
+} from "@/lib/focusChime";
 import {
   SearchableCombobox,
   type ComboboxOption,
@@ -69,6 +76,11 @@ export function StudyTimerWidget({
 
   const [savingTimer, setSavingTimer] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [chimeMuted, setChimeMuted] = useState(false);
+
+  useEffect(() => {
+    setChimeMuted(isFocusChimeMuted());
+  }, []);
 
   // Modal de registro manual
   const [manualOpen, setManualOpen] = useState(false);
@@ -98,6 +110,7 @@ export function StudyTimerWidget({
         const next = prev + 1;
         if (mode === "pomodoro" && next >= pomodoroMinutes * 60) {
           setRunning(false);
+          playFocusChime();
           setNotice(
             `Pomodoro de ${pomodoroMinutes} min concluído! Clique em "Salvar sessão" para registrar.`
           );
@@ -249,6 +262,33 @@ export function StudyTimerWidget({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              const nextMuted = !chimeMuted;
+              setChimeMuted(nextMuted);
+              setFocusChimeMuted(nextMuted);
+              if (!nextMuted) playFocusChime(true);
+            }}
+            title={
+              chimeMuted
+                ? "Ativar sino suave ao finalizar o Pomodoro"
+                : "Silenciar sino do cronômetro"
+            }
+            aria-label={chimeMuted ? "Ativar som do cronômetro" : "Silenciar som"}
+            className="w-8 h-8 rounded-[10px] border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+          >
+            {chimeMuted ? (
+              <SpeakerSlash size={15} weight="light" />
+            ) : (
+              <SpeakerHigh
+                size={15}
+                weight="duotone"
+                className="text-[var(--accent-sage)]"
+              />
+            )}
+          </button>
+
           <div className="inline-flex items-center p-0.5 rounded-lg bg-[var(--bg-subtle)] border border-[var(--border-hairline)]">
             <button
               type="button"

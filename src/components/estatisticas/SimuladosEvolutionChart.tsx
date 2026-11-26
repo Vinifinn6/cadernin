@@ -1,18 +1,20 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useId, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import { formatShortDatePtBr } from "@/lib/date-utils";
+import { groupMockExams, type GroupedMockExam } from "@/lib/mockGrouping";
 import type { EnemArea, MockExam, MockQuestion } from "@/types/database";
 
 type ChartFilter =
@@ -41,36 +43,33 @@ export function SimuladosEvolutionChart({
   exams,
   questions,
 }: SimuladosEvolutionChartProps) {
+  const uid = useId().replace(/:/g, "");
   const [filter, setFilter] = useState<ChartFilter>("geral");
   const [metricMode, setMetricMode] = useState<"scores" | "tri">("scores");
 
-  const questionsByExam = useMemo(() => {
-    const map = new Map<string, MockQuestion[]>();
-    for (const q of questions) {
-      const list = map.get(q.mock_exam_id) ?? [];
-      list.push(q);
-      map.set(q.mock_exam_id, list);
-    }
-    return map;
-  }, [questions]);
-
-  const sortedExams = useMemo(
-    () => [...exams].sort((a, b) => a.date.localeCompare(b.date)),
-    [exams]
+  // Agrupa automaticamente provas de 2 dias (ex: ENEM 2024 Dia 1 + Dia 2 -> 1 ponto consolidado)
+  const groupedSorted: GroupedMockExam[] = useMemo(
+    () =>
+      groupMockExams(exams, questions).sort((a, b) =>
+        a.date.localeCompare(b.date)
+      ),
+    [exams, questions]
   );
 
   const chartData = useMemo(() => {
-    return sortedExams
-      .map((exam) => {
-        const examQs = questionsByExam.get(exam.id) ?? [];
-        const label = formatShortDatePtBr(exam.date);
+    return groupedSorted
+      .map((group) => {
+        const label = formatShortDatePtBr(group.date);
+        const title = group.isGrouped
+          ? `${group.displayTitle} (${group.parts.length} dias)`
+          : group.displayTitle;
 
         if (filter === "redacao") {
-          if (exam.essay_total === null) return null;
+          if (group.essay.essay_total === null) return null;
           return {
             label,
-            title: exam.title,
-            redacao: exam.essay_total,
+            title,
+            redacao: group.essay.essay_total,
           };
         }
 
@@ -78,10 +77,10 @@ export function SimuladosEvolutionChart({
           let triVal: number | null = null;
           if (filter === "geral") {
             const vals = [
-              exam.tri_lc,
-              exam.tri_ch,
-              exam.tri_cn,
-              exam.tri_mt,
+              group.triByArea.tri_lc,
+              group.triByArea.tri_ch,
+              group.triByArea.tri_cn,
+              group.triByArea.tri_mt,
             ].filter((v): v is number => v !== null);
             if (vals.length > 0) {
               triVal =
@@ -89,15 +88,15 @@ export function SimuladosEvolutionChart({
                   (vals.reduce((a, b) => a + Number(b), 0) / vals.length) * 10
                 ) / 10;
             }
-          } else if (filter === "linguagens") triVal = exam.tri_lc;
-          else if (filter === "humanas") triVal = exam.tri_ch;
-          else if (filter === "natureza") triVal = exam.tri_cn;
-          else if (filter === "matematica") triVal = exam.tri_mt;
+          } else if (filter === "linguagens") triVal = group.triByArea.tri_lc;
+          else if (filter === "humanas") triVal = group.triByArea.tri_ch;
+          else if (filter === "natureza") triVal = group.triByArea.tri_cn;
+          else if (filter === "matematica") triVal = group.triByArea.tri_mt;
 
           if (triVal === null) return null;
           return {
             label,
-            title: exam.title,
+            title,
             tri: Number(triVal),
           };
         }
@@ -106,11 +105,13 @@ export function SimuladosEvolutionChart({
         let raw: number | null = null;
         let real: number | null = null;
 
-        if (exam.mode === "xray" && examQs.length > 0) {
+        if (group.hasDetailedQuestions) {
           const areaQs =
             filter === "geral"
-              ? examQs
-              : examQs.filter((q) => q.area === (filter as EnemArea));
+              ? group.allQuestions
+              : group.allQuestions.filter(
+                  (q) => q.area === (filter as EnemArea)
+                );
 
           if (areaQs.length > 0) {
             real = areaQs.filter((q) => q.outcome === "real_correct").length;
@@ -124,49 +125,48 @@ export function SimuladosEvolutionChart({
           }
         }
 
-        // Fallback para campos score_* (Express ou Raio-X sem questões filtradas)
         if (raw === null) {
           if (filter === "geral") {
             const vals = [
-              exam.score_lc,
-              exam.score_ch,
-              exam.score_cn,
-              exam.score_mt,
+              group.scoresByArea.score_lc,
+              group.scoresByArea.score_ch,
+              group.scoresByArea.score_cn,
+              group.scoresByArea.score_mt,
             ].filter((v): v is number => v !== null);
             if (vals.length > 0) {
               raw = vals.reduce((a, b) => a + b, 0);
             }
-          } else if (filter === "linguagens") raw = exam.score_lc;
-          else if (filter === "humanas") raw = exam.score_ch;
-          else if (filter === "natureza") raw = exam.score_cn;
-          else if (filter === "matematica") raw = exam.score_mt;
+          } else if (filter === "linguagens") raw = group.scoresByArea.score_lc;
+          else if (filter === "humanas") raw = group.scoresByArea.score_ch;
+          else if (filter === "natureza") raw = group.scoresByArea.score_cn;
+          else if (filter === "matematica") raw = group.scoresByArea.score_mt;
         }
 
         if (raw === null) return null;
 
         return {
           label,
-          title: exam.title,
+          title,
           bruto: raw,
-          real: real,
+          real,
         };
       })
       .filter((row): row is NonNullable<typeof row> => row !== null);
-  }, [sortedExams, questionsByExam, filter, metricMode]);
+  }, [groupedSorted, filter, metricMode]);
 
-  // Média das 5 Competências da Redação (C1–C5)
+  // Média das 5 Competências da Redação (C1–C5) sobre os simulados consolidados
   const essayCompetenciesData = useMemo(() => {
-    const withComps = sortedExams.filter(
-      (e) =>
-        e.essay_c1 !== null ||
-        e.essay_c2 !== null ||
-        e.essay_c3 !== null ||
-        e.essay_c4 !== null ||
-        e.essay_c5 !== null
+    const withComps = groupedSorted.filter(
+      (g) =>
+        g.essay.essay_c1 !== null ||
+        g.essay.essay_c2 !== null ||
+        g.essay.essay_c3 !== null ||
+        g.essay.essay_c4 !== null ||
+        g.essay.essay_c5 !== null
     );
     if (withComps.length === 0) return null;
 
-    const avgOf = (getter: (e: MockExam) => number | null) => {
+    const avgOf = (getter: (g: GroupedMockExam) => number | null) => {
       const vals = withComps
         .map(getter)
         .filter((v): v is number => v !== null);
@@ -175,13 +175,13 @@ export function SimuladosEvolutionChart({
     };
 
     return [
-      { comp: "C1", media: avgOf((e) => e.essay_c1), desc: "Norma culta" },
-      { comp: "C2", media: avgOf((e) => e.essay_c2), desc: "Tema e repertório" },
-      { comp: "C3", media: avgOf((e) => e.essay_c3), desc: "Argumentação" },
-      { comp: "C4", media: avgOf((e) => e.essay_c4), desc: "Coesão" },
-      { comp: "C5", media: avgOf((e) => e.essay_c5), desc: "Intervenção" },
+      { comp: "C1", media: avgOf((g) => g.essay.essay_c1), desc: "Norma culta" },
+      { comp: "C2", media: avgOf((g) => g.essay.essay_c2), desc: "Tema e repertório" },
+      { comp: "C3", media: avgOf((g) => g.essay.essay_c3), desc: "Argumentação" },
+      { comp: "C4", media: avgOf((g) => g.essay.essay_c4), desc: "Coesão" },
+      { comp: "C5", media: avgOf((g) => g.essay.essay_c5), desc: "Intervenção" },
     ];
-  }, [sortedExams]);
+  }, [groupedSorted]);
 
   return (
     <section className="bg-[var(--bg-card)] rounded-2xl p-5 sm:p-6 border border-[var(--border-hairline)] space-y-5">
@@ -223,22 +223,32 @@ export function SimuladosEvolutionChart({
         )}
       </div>
 
-      {/* Filtros de Área / Redação */}
+      {/* Filtros de Área / Redação com pílula deslizante suave */}
       <div className="flex flex-wrap items-center gap-1.5">
-        {FILTER_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setFilter(tab.id)}
-            className={`px-3 py-1 rounded-full text-[12px] transition-colors cursor-pointer ${
-              filter === tab.id
-                ? "bg-[var(--text-primary)] text-[var(--bg-canvas)] font-medium"
-                : "bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        {FILTER_TABS.map((tab) => {
+          const active = filter === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilter(tab.id)}
+              className={`relative px-3 py-1 rounded-full text-[12px] transition-colors cursor-pointer ${
+                active
+                  ? "text-[var(--bg-canvas)] font-medium"
+                  : "bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              {active && (
+                <motion.span
+                  layoutId="simuladosFilterPill"
+                  transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                  className="absolute inset-0 rounded-full bg-[var(--text-primary)]"
+                />
+              )}
+              <span className="relative z-10">{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Gráfico Principal de Linhas */}
@@ -259,96 +269,123 @@ export function SimuladosEvolutionChart({
         <div className="space-y-2 min-w-0">
           <div className="h-[240px] sm:h-[260px] w-full min-w-0">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart
+              <AreaChart
                 data={chartData}
                 margin={{ top: 10, right: 12, left: -16, bottom: 4 }}
               >
+                <defs>
+                  <linearGradient id={`sim-slate-${uid}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--accent-slate)" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="var(--accent-slate)" stopOpacity={0.01} />
+                  </linearGradient>
+                  <linearGradient id={`sim-sage-${uid}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--accent-sage)" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="var(--accent-sage)" stopOpacity={0.01} />
+                  </linearGradient>
+                  <linearGradient id={`sim-terra-${uid}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--accent-terracotta)" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="var(--accent-terracotta)" stopOpacity={0.01} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid
-                  stroke="var(--border-hairline)"
+                  stroke="var(--border-strong)"
                   strokeDasharray="3 3"
+                  strokeOpacity={0.22}
                   vertical={false}
                 />
                 <XAxis
                   dataKey="label"
                   interval="preserveStartEnd"
-                  tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+                  tick={{
+                    fill: "var(--text-muted)",
+                    fontSize: 11,
+                    fontFamily: "var(--font-jetbrains-mono)",
+                  }}
                   axisLine={{ stroke: "var(--border-hairline)" }}
                   tickLine={false}
                 />
-              <YAxis
-                tick={{ fill: "var(--text-muted)", fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-                domain={filter === "redacao" ? [0, 1000] : ["auto", "auto"]}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "var(--bg-card)",
-                  border: "1px solid var(--border-hairline)",
-                  borderRadius: "12px",
-                  fontSize: "12px",
-                  color: "var(--text-primary)",
-                }}
-                labelFormatter={(_, payload) =>
-                  payload?.[0]?.payload?.title ?? ""
-                }
-              />
+                <YAxis
+                  tick={{
+                    fill: "var(--text-muted)",
+                    fontSize: 11,
+                    fontFamily: "var(--font-jetbrains-mono)",
+                  }}
+                  axisLine={false}
+                  tickLine={false}
+                  domain={filter === "redacao" ? [0, 1000] : ["auto", "auto"]}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "var(--bg-card)",
+                    border: "1px solid var(--border-hairline)",
+                    borderRadius: "12px",
+                    fontSize: "12px",
+                    fontFamily: "var(--font-jetbrains-mono)",
+                    color: "var(--text-primary)",
+                  }}
+                  labelFormatter={(_, payload) =>
+                    payload?.[0]?.payload?.title ?? ""
+                  }
+                />
 
-              {filter === "redacao" ? (
-                <Line
-                  type="monotone"
-                  dataKey="redacao"
-                  name="Redação"
-                  stroke="var(--accent-sage)"
-                  strokeWidth={2.2}
-                  dot={{ r: 4, fill: "var(--accent-sage)" }}
-                  activeDot={{ r: 6 }}
-                />
-              ) : metricMode === "tri" ? (
-                <Line
-                  type="monotone"
-                  dataKey="tri"
-                  name="Nota TRI"
-                  stroke="var(--accent-slate)"
-                  strokeWidth={2.2}
-                  dot={{ r: 4, fill: "var(--accent-slate)" }}
-                  activeDot={{ r: 6 }}
-                />
-              ) : (
-                <>
-                  <Line
+                {filter === "redacao" ? (
+                  <Area
                     type="monotone"
-                    dataKey="bruto"
-                    name="Acerto Bruto"
-                    stroke="var(--accent-slate)"
-                    strokeWidth={2.2}
-                    dot={{ r: 4, fill: "var(--accent-slate)" }}
-                    activeDot={{ r: 6 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="real"
-                    name="Acerto Real (sem chutes)"
+                    dataKey="redacao"
+                    name="Redação"
                     stroke="var(--accent-sage)"
                     strokeWidth={2.2}
-                    strokeDasharray="4 3"
-                    connectNulls
-                    dot={{ r: 4, fill: "var(--accent-sage)" }}
-                    activeDot={{ r: 6 }}
+                    fill={`url(#sim-sage-${uid})`}
+                    dot={{ r: 3.5, fill: "var(--bg-card)", strokeWidth: 2 }}
+                    activeDot={{ r: 5.5 }}
                   />
-                </>
-              )}
-            </LineChart>
-          </ResponsiveContainer>
+                ) : metricMode === "tri" ? (
+                  <Area
+                    type="monotone"
+                    dataKey="tri"
+                    name="Nota TRI"
+                    stroke="var(--accent-slate)"
+                    strokeWidth={2.2}
+                    fill={`url(#sim-slate-${uid})`}
+                    dot={{ r: 3.5, fill: "var(--bg-card)", strokeWidth: 2 }}
+                    activeDot={{ r: 5.5 }}
+                  />
+                ) : (
+                  <>
+                    <Area
+                      type="monotone"
+                      dataKey="bruto"
+                      name="Acerto Bruto"
+                      stroke="var(--accent-slate)"
+                      strokeWidth={2.2}
+                      fill={`url(#sim-slate-${uid})`}
+                      dot={{ r: 3.5, fill: "var(--bg-card)", strokeWidth: 2 }}
+                      activeDot={{ r: 5.5 }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="real"
+                      name="Acerto Real (sem chutes)"
+                      stroke="var(--accent-terracotta)"
+                      strokeWidth={2.2}
+                      fill={`url(#sim-terra-${uid})`}
+                      connectNulls
+                      dot={{ r: 3.5, fill: "var(--bg-card)", strokeWidth: 2 }}
+                      activeDot={{ r: 5.5 }}
+                    />
+                  </>
+                )}
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
           {filter !== "redacao" && metricMode === "scores" && (
             <div className="flex flex-wrap items-center gap-4 text-[11.5px] text-[var(--text-secondary)] pt-1">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-3 h-0.5 bg-[var(--accent-slate)] inline-block" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[var(--accent-slate)] inline-block" />
                 Acerto Bruto
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-3 h-0.5 bg-[var(--accent-sage)] inline-block border-t border-dashed border-[var(--accent-sage)]" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[var(--accent-terracotta)] inline-block" />
                 Acerto Real (sem chutes)
               </span>
             </div>

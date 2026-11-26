@@ -65,17 +65,18 @@ const NAV_ITEMS: NavItem[] = [
     mobilePrimary: true,
   },
   {
-    href: "/estatisticas",
-    label: "Estatísticas",
-    shortLabel: "Estatísticas",
-    icon: ChartLineUp,
-    mobilePrimary: true,
-  },
-  {
     href: "/planejador",
     label: "Planejador",
     shortLabel: "Planejador",
     icon: CalendarBlank,
+    mobilePrimary: true,
+  },
+  {
+    href: "/estatisticas",
+    label: "Estatísticas",
+    shortLabel: "Estatíst.",
+    icon: ChartLineUp,
+    mobilePrimary: true,
   },
   {
     href: "/configuracoes",
@@ -421,13 +422,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </main>
 
       {/* =====================================================================
-          BARRA INFERIOR MOBILE (5 abas principais como no design-ref)
+          BARRA INFERIOR MOBILE (6 abas principais: inclui Planejador)
          ===================================================================== */}
       <nav
         aria-label="Atalhos inferiores"
         className="md:hidden fixed bottom-0 inset-x-0 z-40 pb-safe bg-[var(--bg-canvas)]/92 backdrop-blur-md border-t border-[var(--border-hairline)]"
       >
-        <div className="grid grid-cols-5 h-16 px-1">
+        <div className="grid grid-cols-6 h-16 px-0.5">
           {NAV_ITEMS.filter((item) => item.mobilePrimary).map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
@@ -435,14 +436,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex flex-col items-center justify-center gap-0.5 text-[11px] transition-colors ${
+                className={`flex flex-col items-center justify-center gap-0.5 text-[10px] tracking-tight transition-colors ${
                   active
                     ? "text-[var(--accent-sage)] font-medium"
                     : "text-[var(--text-secondary)]"
                 }`}
               >
-                <Icon size={21} weight={active ? "duotone" : "light"} />
-                <span className="truncate max-w-full px-1">{item.shortLabel}</span>
+                <Icon size={20} weight={active ? "duotone" : "light"} />
+                <span className="truncate max-w-full px-0.5">{item.shortLabel}</span>
               </Link>
             );
           })}

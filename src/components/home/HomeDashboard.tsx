@@ -2,9 +2,12 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
   ArrowsClockwise,
+  ArrowsInSimple,
+  ArrowsOutSimple,
   CalendarBlank,
   CaretLeft,
   CaretRight,
@@ -15,14 +18,13 @@ import {
   Lightning,
   Play,
   Plus,
+  Timer,
 } from "@phosphor-icons/react";
 import { ProfileHeroBanner } from "@/components/home/ProfileHeroBanner";
 import { useProfileTheme } from "@/components/providers/ProfileThemeProvider";
 import { MemoryBattery } from "@/components/shared/MemoryBattery";
-import {
-  ConsistencyHeatmap,
-  type DailyActivityData,
-} from "@/components/estatisticas/ConsistencyHeatmap";
+import { ConsistencyHeatmap } from "@/components/estatisticas/ConsistencyHeatmap";
+import { RealityShockChart } from "@/components/estatisticas/RealityShockChart";
 import { fetchCurriculumData } from "@/lib/curriculum-service";
 import { fetchEnemSkills } from "@/lib/enem-service";
 import { fetchExerciseLogs } from "@/lib/exercises-service";
@@ -34,6 +36,8 @@ import {
   updateWeeklyPlanItem,
 } from "@/lib/planner-service";
 import { calculatePriorities } from "@/lib/priorityEngine";
+import { getSubjectColorStyles } from "@/lib/editorialPalette";
+import { buildDailyActivityMap } from "@/lib/activityCalendar";
 import {
   addDays,
   formatMinutesHuman,
@@ -70,7 +74,24 @@ const MONTH_NAMES_PT = [
   "Dezembro",
 ];
 
+const WEEKDAY_SHORT_SUN_TO_SAT = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SÁB"];
 const WEEKDAY_INITIALS = ["D", "S", "T", "Q", "Q", "S", "S"];
+
+function getStartOfWeekSunday(date: Date): Date {
+  const copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  copy.setDate(copy.getDate() - copy.getDay());
+  return copy;
+}
+
+function getSeverityBadgeClasses(score: number): string {
+  if (score >= 65) {
+    return "bg-[var(--accent-terracotta-soft)] text-[var(--accent-terracotta)] border border-[var(--accent-terracotta)]/30";
+  }
+  if (score >= 35) {
+    return "bg-[var(--accent-ochre-soft)] text-[var(--accent-ochre)] border border-[var(--accent-ochre)]/30";
+  }
+  return "bg-[var(--accent-sage-soft)] text-[var(--accent-sage)] border border-[var(--accent-sage)]/30";
+}
 
 export function HomeDashboard() {
   const { profile, supabaseStatus } = useProfileTheme();
@@ -86,6 +107,11 @@ export function HomeDashboard() {
 
   const todayIso = getTodayIso();
   const [selectedDateIso, setSelectedDateIso] = useState<string>(todayIso);
+  // Calendário compacto (semana atual) por padrão tanto no desktop quanto no mobile
+  const [calendarExpanded, setCalendarExpanded] = useState<boolean>(false);
+  const [weekStartSunday, setWeekStartSunday] = useState<Date>(() =>
+    getStartOfWeekSunday(new Date())
+  );
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -130,11 +156,6 @@ export function HomeDashboard() {
   const subjectMap = useMemo(
     () => new Map(subjects.map((s) => [s.id, s])),
     [subjects]
-  );
-
-  const examMap = useMemo(
-    () => new Map(mockExams.map((e) => [e.id, e])),
-    [mockExams]
   );
 
   // 1. Motor de Prioridade + Revisões FSRS
@@ -187,7 +208,7 @@ export function HomeDashboard() {
     return engine.enemSkillPriorities.slice(0, 4);
   }, [engine]);
 
-  // 2. Minicalendário Mensal + Tarefas do Dia Selecionado
+  // 2. Calendário Compacto (Semana) + Expansível (Mês) + Tarefas do Dia
   const planItemsByDate = useMemo(() => {
     const map = new Map<string, WeeklyPlanItem[]>();
     for (const item of planItems) {
@@ -198,7 +219,20 @@ export function HomeDashboard() {
     return map;
   }, [planItems]);
 
-  const calendarCells = useMemo(() => {
+  const compactWeekDays = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = addDays(weekStartSunday, i);
+      const iso = toLocalIsoDate(d);
+      return {
+        abbr: WEEKDAY_SHORT_SUN_TO_SAT[i],
+        day: d.getDate(),
+        iso,
+        hasTasks: (planItemsByDate.get(iso)?.length ?? 0) > 0,
+      };
+    });
+  }, [weekStartSunday, planItemsByDate]);
+
+  const monthCells = useMemo(() => {
     const year = calendarMonth.getFullYear();
     const month = calendarMonth.getMonth();
     const firstWeekday = new Date(year, month, 1).getDay();
@@ -217,6 +251,51 @@ export function HomeDashboard() {
     }
     return cells;
   }, [calendarMonth, planItemsByDate]);
+
+  // Mês/ano exibido no topo do calendário conforme o modo ativo
+  const visibleCalendarDate = calendarExpanded
+    ? calendarMonth
+    : addDays(weekStartSunday, 3); // Quarta-feira da semana visível
+
+  const handleCalendarPrev = () => {
+    if (calendarExpanded) {
+      setCalendarMonth(
+        (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
+      );
+    } else {
+      setWeekStartSunday((prev) => addDays(prev, -7));
+    }
+  };
+
+  const handleCalendarNext = () => {
+    if (calendarExpanded) {
+      setCalendarMonth(
+        (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
+      );
+    } else {
+      setWeekStartSunday((prev) => addDays(prev, 7));
+    }
+  };
+
+  const handleCalendarToday = () => {
+    const now = new Date();
+    setWeekStartSunday(getStartOfWeekSunday(now));
+    setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+    setSelectedDateIso(todayIso);
+  };
+
+  const handleToggleCalendarExpand = () => {
+    setCalendarExpanded((prev) => {
+      const next = !prev;
+      const anchor = parseLocalIsoDate(selectedDateIso);
+      if (next) {
+        setCalendarMonth(new Date(anchor.getFullYear(), anchor.getMonth(), 1));
+      } else {
+        setWeekStartSunday(getStartOfWeekSunday(anchor));
+      }
+      return next;
+    });
+  };
 
   const selectedDayTasks = planItemsByDate.get(selectedDateIso) ?? [];
   const selectedDayDoneCount = selectedDayTasks.filter(
@@ -256,21 +335,17 @@ export function HomeDashboard() {
     }
   };
 
-  // 3. Resumo de Ritmo: mapa diário, streak real, minutos hoje e na semana
-  const dailyActivityMap = useMemo(() => {
-    const map: Record<string, DailyActivityData> = {};
-    const ensure = (iso: string) => {
-      if (!map[iso]) map[iso] = { date: iso, minutes: 0, questions: 0 };
-      return map[iso];
-    };
-    for (const s of studySessions) ensure(s.date).minutes += s.duration_minutes;
-    for (const l of exerciseLogs) ensure(l.date).questions += l.total_questions;
-    for (const q of mockQuestions) {
-      const d = examMap.get(q.mock_exam_id)?.date;
-      if (d) ensure(d).questions += 1;
-    }
-    return map;
-  }, [studySessions, exerciseLogs, mockQuestions, examMap]);
+  // 3. Atividade diária combinada (Tempo + Exercícios + Simulados, normalizada sem shift UTC)
+  const dailyActivityMap = useMemo(
+    () =>
+      buildDailyActivityMap({
+        studySessions,
+        exerciseLogs,
+        mockExams,
+        mockQuestions,
+      }),
+    [studySessions, exerciseLogs, mockExams, mockQuestions]
+  );
 
   const rhythmStats = useMemo(() => {
     const todayMinutes = dailyActivityMap[todayIso]?.minutes ?? 0;
@@ -280,10 +355,8 @@ export function HomeDashboard() {
       .filter((s) => s.date >= mondayIso && s.date <= todayIso)
       .reduce((acc, s) => acc + s.duration_minutes, 0);
 
-    // Calcula sequência de dias ativos (streak)
     let streak = 0;
     let cursor = new Date();
-    // Se hoje ainda não teve atividade, começa a checar de ontem para não zerar o streak de manhã
     const hasToday =
       (dailyActivityMap[todayIso]?.minutes ?? 0) > 0 ||
       (dailyActivityMap[todayIso]?.questions ?? 0) > 0;
@@ -305,61 +378,11 @@ export function HomeDashboard() {
     return { todayMinutes, weekMinutes, streak };
   }, [dailyActivityMap, studySessions, todayIso]);
 
-  // 4. Último Simulado / Choque de Realidade
-  const latestExamSummary = useMemo(() => {
-    if (mockExams.length === 0) return null;
-    const latest = mockExams[0];
-    const examQs = mockQuestions.filter((q) => q.mock_exam_id === latest.id);
-
-    if (latest.mode === "xray" && examQs.length > 0) {
-      const total = examQs.length;
-      const real = examQs.filter((q) => q.outcome === "real_correct").length;
-      const guesses = examQs.filter(
-        (q) =>
-          q.outcome === "guess_1" ||
-          q.outcome === "guess_2" ||
-          q.outcome === "guess_3"
-      ).length;
-      const raw = real + guesses;
-      const rawPct = Math.round((raw / total) * 1000) / 10;
-      const realPct = Math.round((real / total) * 1000) / 10;
-      return {
-        exam: latest,
-        isXray: true,
-        total,
-        raw,
-        real,
-        guesses,
-        rawPct,
-        realPct,
-        diffPct: Math.round((rawPct - realPct) * 10) / 10,
-      };
-    }
-
-    const expressRaw =
-      (latest.score_lc ?? 0) +
-      (latest.score_ch ?? 0) +
-      (latest.score_cn ?? 0) +
-      (latest.score_mt ?? 0);
-
-    return {
-      exam: latest,
-      isXray: false,
-      total: 0,
-      raw: expressRaw,
-      real: 0,
-      guesses: 0,
-      rawPct: 0,
-      realPct: 0,
-      diffPct: 0,
-    };
-  }, [mockExams, mockQuestions]);
-
   const dailyGoalHours = (profile.daily_goal_minutes / 60).toFixed(1);
 
   return (
     <div className="space-y-6">
-      {/* Banner Editorial + Foto de Perfil + Saudação Personalizada */}
+      {/* Banner Editorial + Avatar 96px/80px + Fade Suave + Saudação */}
       <ProfileHeroBanner />
 
       {supabaseStatus === "unconfigured" && (
@@ -374,8 +397,9 @@ export function HomeDashboard() {
               <span className="font-medium text-[var(--text-primary)]">
                 Banco ainda em modo local.
               </span>{" "}
-              Configure seu <code className="font-mono-tabular">.env.local</code>{" "}
-              para sincronizar seus estudos.
+              Configure seu{" "}
+              <code className="font-mono-tabular">.env.local</code> para
+              sincronizar seus estudos.
             </p>
           </div>
           <Link
@@ -389,12 +413,77 @@ export function HomeDashboard() {
       )}
 
       {/* =====================================================================
-          GRID BENTO EDITORIAL (4 MÓDULOS CONECTADOS AOS DADOS REAIS)
+          GRID BENTO EDITORIAL
+          Coluna Esquerda: 1º Ritmo de estudos -> 2º O que atacar hoje
+          Coluna Direita:  1º Calendário & tarefas (compacto) -> 2º Choque de realidade
          ===================================================================== */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* COLUNA ESQUERDA: Assuntos Mais Urgentes + Resumo de Ritmo */}
+        {/* COLUNA ESQUERDA */}
         <div className="lg:col-span-6 space-y-6">
-          {/* 1. O QUE ATACAR HOJE (INCÊNDIOS | REVISÕES | AUTOMÁTICO) */}
+          {/* 1. RITMO DE ESTUDOS (TOPO DA COLUNA ESQUERDA) */}
+          <section className="bg-[var(--bg-card)] rounded-2xl p-5 sm:p-6 border border-[var(--border-hairline)] space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Flame
+                  size={19}
+                  weight="duotone"
+                  className="text-[var(--accent-sage)]"
+                />
+                <h2 className="font-editorial text-[21px] leading-tight text-[var(--text-primary)]">
+                  Ritmo de <em className="italic font-normal">estudos</em>
+                </h2>
+              </div>
+
+              <span className="px-2.5 py-0.5 rounded-full bg-[var(--accent-sage-soft)] text-[var(--accent-sage)] font-mono-tabular text-[11px] font-medium shrink-0">
+                {rhythmStats.streak}{" "}
+                {rhythmStats.streak === 1 ? "dia seguido" : "dias seguidos"}
+              </span>
+            </div>
+
+            <ConsistencyHeatmap
+              dailyMap={dailyActivityMap}
+              weeksCount={15}
+              compact
+              defaultMetric="combined"
+              showMetricToggle={false}
+            />
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3.5 bg-[var(--bg-subtle)] rounded-xl border border-[var(--border-hairline)]/60">
+                <span className="text-[11.5px] font-medium text-[var(--text-secondary)] block">
+                  Hoje registrado
+                </span>
+                <span className="font-mono-tabular text-[20px] font-medium text-[var(--text-primary)] block mt-1">
+                  {formatMinutesHuman(rhythmStats.todayMinutes)}
+                </span>
+                <span className="text-[11px] text-[var(--text-muted)] block mt-0.5">
+                  Meta diária: {dailyGoalHours}h
+                </span>
+              </div>
+
+              <div className="p-3.5 bg-[var(--bg-subtle)] rounded-xl border border-[var(--border-hairline)]/60">
+                <span className="text-[11.5px] font-medium text-[var(--text-secondary)] block">
+                  Esta semana
+                </span>
+                <span className="font-mono-tabular text-[20px] font-medium text-[var(--text-primary)] block mt-1">
+                  {formatMinutesHuman(rhythmStats.weekMinutes)}
+                </span>
+                <span className="text-[11px] text-[var(--accent-sage)] block mt-0.5">
+                  Desde segunda-feira
+                </span>
+              </div>
+            </div>
+
+            <Link
+              href="/planejador?focusTimer=1"
+              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-[10px] bg-[var(--accent-sage)] hover:bg-[var(--accent-sage-hover)] text-[#FAF8F5] text-[13.5px] font-medium transition-colors"
+            >
+              <Timer size={18} weight="regular" />
+              <span>Iniciar Cronômetro / Pomodoro</span>
+            </Link>
+          </section>
+
+          {/* 2. O QUE ATACAR HOJE (PARTE INFERIOR DA COLUNA ESQUERDA) */}
           <section className="bg-[var(--bg-card)] rounded-2xl p-5 sm:p-6 border border-[var(--border-hairline)] space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -403,12 +492,11 @@ export function HomeDashboard() {
                   weight="duotone"
                   className="text-[var(--accent-terracotta)]"
                 />
-                <h2 className="font-editorial text-[20px] leading-tight text-[var(--text-primary)]">
-                  O que atacar hoje
+                <h2 className="font-editorial text-[21px] leading-tight text-[var(--text-primary)]">
+                  O que atacar <em className="italic font-normal">hoje</em>
                 </h2>
               </div>
 
-              {/* Controle segmentado: Incêndios | Revisões | Automático */}
               <div
                 role="tablist"
                 aria-label="Modo de priorização"
@@ -435,20 +523,31 @@ export function HomeDashboard() {
                       role="tab"
                       aria-selected={active}
                       onClick={() => setAttackTab(tab.id)}
-                      className={`px-2.5 py-1 rounded-md text-[11.5px] transition-colors cursor-pointer ${
+                      className={`relative px-2.5 py-1 rounded-md text-[11.5px] transition-colors cursor-pointer ${
                         active
-                          ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-medium border border-[var(--border-hairline)]"
+                          ? "text-[var(--text-primary)] font-medium"
                           : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                       }`}
                     >
-                      {tab.label}
+                      {active && (
+                        <motion.span
+                          layoutId="homeAttackTabPill"
+                          transition={{
+                            type: "spring",
+                            stiffness: 420,
+                            damping: 32,
+                          }}
+                          className="absolute inset-0 rounded-md bg-[var(--bg-card)] border border-[var(--border-hairline)]"
+                        />
+                      )}
+                      <span className="relative z-10">{tab.label}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* ABA 1: INCÊNDIOS (Maior Urgência de Domínio U) */}
+            {/* ABA 1: INCÊNDIOS */}
             {attackTab === "fires" &&
               (firesList.length === 0 ? (
                 <div className="p-5 rounded-xl bg-[var(--bg-subtle)]/65 border border-[var(--border-hairline)]/60 text-center space-y-2">
@@ -473,22 +572,15 @@ export function HomeDashboard() {
                     const subj = item.subjectId
                       ? subjectMap.get(item.subjectId)
                       : undefined;
-                    const high = item.urgencyScore >= 65;
+                    const palette = getSubjectColorStyles(subj?.color);
 
                     return (
                       <div
                         key={item.id}
-                        className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 transition-colors flex items-center justify-between gap-3"
+                        className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/70 transition-colors flex items-center justify-between gap-3"
                       >
-                        <div className="space-y-1 min-w-0 flex-1">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{
-                                backgroundColor:
-                                  subj?.color ?? "var(--accent-slate)",
-                              }}
-                            />
+                        <div className="space-y-1.5 min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
                             <Link
                               href="/cronograma"
                               className="text-[14px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-sage)] truncate"
@@ -496,27 +588,36 @@ export function HomeDashboard() {
                               {item.label}
                             </Link>
                             {item.kind === "topic" && item.secondaryLabel && (
-                              <span className="text-[11.5px] text-[var(--text-secondary)] truncate">
-                                • {item.secondaryLabel}
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[11px] font-medium truncate max-w-[140px]"
+                                style={{
+                                  backgroundColor: palette.pillBg,
+                                  border: `1px solid ${palette.pillBorder}`,
+                                  color: palette.textColor,
+                                }}
+                              >
+                                {item.secondaryLabel}
                               </span>
                             )}
                           </div>
                           <p className="font-mono-tabular text-[11px] text-[var(--text-muted)]">
                             {item.realAccuracyPct}% real · {item.totalQuestions}{" "}
-                            questões
+                            {item.totalQuestions === 1
+                              ? "questão"
+                              : "questões"}
                             {item.errorGap > 0
-                              ? ` · ${item.errorGap} lacunas`
+                              ? ` · ${item.errorGap} ${
+                                  item.errorGap === 1 ? "lacuna" : "lacunas"
+                                }`
                               : ""}
                           </p>
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
                           <span
-                            className={`px-2 py-0.5 rounded-md font-mono-tabular text-[11px] font-medium ${
-                              high
-                                ? "bg-[var(--accent-terracotta-soft)] text-[var(--accent-terracotta)]"
-                                : "bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[var(--text-secondary)]"
-                            }`}
+                            className={`px-2.5 py-0.5 rounded-md font-mono-tabular text-[11px] font-medium ${getSeverityBadgeClasses(
+                              item.urgencyScore
+                            )}`}
                           >
                             Urgência {item.urgencyScore}
                           </span>
@@ -538,7 +639,7 @@ export function HomeDashboard() {
                 </div>
               ))}
 
-            {/* ABA 2: REVISÕES (Assuntos cuja memória caiu abaixo do alvo ou venceram) */}
+            {/* ABA 2: REVISÕES */}
             {attackTab === "reviews" &&
               (reviewsList.length === 0 ? (
                 <div className="p-5 rounded-xl bg-[var(--bg-subtle)]/65 border border-[var(--border-hairline)]/60 text-center space-y-2">
@@ -546,9 +647,9 @@ export function HomeDashboard() {
                     Nenhuma revisão pendente agora
                   </p>
                   <p className="text-[12.5px] text-[var(--text-secondary)] leading-relaxed">
-                    As revisões aparecem automaticamente aqui conforme você
-                    pratica listas de exercícios ou simulados e o momento ideal
-                    de reforçar a memória chega.
+                    As revisões aparecem automaticamente aqui após praticar
+                    exercícios ou simulados quando chegar o momento ideal de
+                    reforçar a memória.
                   </p>
                   <Link
                     href="/exercicios"
@@ -564,29 +665,30 @@ export function HomeDashboard() {
                     const subj = item.subjectId
                       ? subjectMap.get(item.subjectId)
                       : undefined;
+                    const palette = getSubjectColorStyles(subj?.color);
                     const isOverdue =
                       item.daysUntilDue !== null && item.daysUntilDue < 0;
 
                     return (
                       <div
                         key={item.id}
-                        className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 transition-colors flex flex-wrap sm:flex-nowrap items-center justify-between gap-3"
+                        className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/70 transition-colors flex flex-wrap sm:flex-nowrap items-center justify-between gap-3"
                       >
-                        <div className="space-y-1 min-w-0 flex-1">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{
-                                backgroundColor:
-                                  subj?.color ?? "var(--accent-sage)",
-                              }}
-                            />
+                        <div className="space-y-1.5 min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
                             <span className="text-[14px] font-medium text-[var(--text-primary)] truncate">
                               {item.label}
                             </span>
                             {item.secondaryLabel && (
-                              <span className="text-[11.5px] text-[var(--text-secondary)] truncate">
-                                • {item.secondaryLabel}
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[11px] font-medium truncate max-w-[140px]"
+                                style={{
+                                  backgroundColor: palette.pillBg,
+                                  border: `1px solid ${palette.pillBorder}`,
+                                  color: palette.textColor,
+                                }}
+                              >
+                                {item.secondaryLabel}
                               </span>
                             )}
                           </div>
@@ -622,7 +724,7 @@ export function HomeDashboard() {
                 </div>
               ))}
 
-            {/* ABA 3: AUTOMÁTICO (Ranking combinado Lacunas + Revisões) */}
+            {/* ABA 3: AUTOMÁTICO */}
             {attackTab === "auto" &&
               (autoList.length === 0 ? (
                 <div className="p-5 rounded-xl bg-[var(--bg-subtle)]/65 border border-[var(--border-hairline)]/60 text-center space-y-2">
@@ -647,22 +749,15 @@ export function HomeDashboard() {
                     const subj = item.subjectId
                       ? subjectMap.get(item.subjectId)
                       : undefined;
-                    const high = item.autoScore >= 65;
+                    const palette = getSubjectColorStyles(subj?.color);
 
                     return (
                       <div
                         key={item.id}
-                        className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 transition-colors flex items-center justify-between gap-3"
+                        className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/70 transition-colors flex items-center justify-between gap-3"
                       >
-                        <div className="space-y-1 min-w-0 flex-1">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{
-                                backgroundColor:
-                                  subj?.color ?? "var(--accent-slate)",
-                              }}
-                            />
+                        <div className="space-y-1.5 min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
                             <Link
                               href="/cronograma"
                               className="text-[14px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-sage)] truncate"
@@ -670,8 +765,15 @@ export function HomeDashboard() {
                               {item.label}
                             </Link>
                             {item.kind === "topic" && item.secondaryLabel && (
-                              <span className="text-[11.5px] text-[var(--text-secondary)] truncate">
-                                • {item.secondaryLabel}
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[11px] font-medium truncate max-w-[140px]"
+                                style={{
+                                  backgroundColor: palette.pillBg,
+                                  border: `1px solid ${palette.pillBorder}`,
+                                  color: palette.textColor,
+                                }}
+                              >
+                                {item.secondaryLabel}
                               </span>
                             )}
                           </div>
@@ -686,7 +788,7 @@ export function HomeDashboard() {
                             )}
                             <span>{item.realAccuracyPct}% real</span>
                             {item.isDueForReview && (
-                              <span className="text-[var(--accent-ochre)]">
+                              <span className="text-[var(--accent-ochre)] font-medium">
                                 • {item.dueStatusLabel}
                               </span>
                             )}
@@ -695,11 +797,9 @@ export function HomeDashboard() {
 
                         <div className="flex items-center gap-2 shrink-0">
                           <span
-                            className={`px-2 py-0.5 rounded-md font-mono-tabular text-[11px] font-medium ${
-                              high
-                                ? "bg-[var(--accent-terracotta-soft)] text-[var(--accent-terracotta)]"
-                                : "bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[var(--text-secondary)]"
-                            }`}
+                            className={`px-2.5 py-0.5 rounded-md font-mono-tabular text-[11px] font-medium ${getSeverityBadgeClasses(
+                              item.autoScore
+                            )}`}
                           >
                             Score {item.autoScore}
                           </span>
@@ -739,73 +839,11 @@ export function HomeDashboard() {
               <ArrowRight size={15} weight="light" />
             </Link>
           </section>
-
-          {/* 2. RESUMO DE RITMO + CRONÔMETRO RÁPIDO */}
-          <section className="bg-[var(--bg-card)] rounded-2xl p-5 sm:p-6 border border-[var(--border-hairline)] space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Flame
-                  size={19}
-                  weight="duotone"
-                  className="text-[var(--accent-sage)]"
-                />
-                <h2 className="font-editorial text-[20px] leading-tight text-[var(--text-primary)]">
-                  Ritmo de Estudos
-                </h2>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-full bg-[var(--accent-sage-soft)] text-[var(--accent-sage)] font-mono-tabular text-[11px] font-medium">
-                {rhythmStats.streak}{" "}
-                {rhythmStats.streak === 1 ? "dia seguido" : "dias seguidos"}
-              </span>
-            </div>
-
-            <ConsistencyHeatmap
-              dailyMap={dailyActivityMap}
-              weeksCount={14}
-              compact
-              defaultMetric="minutes"
-              showMetricToggle={false}
-            />
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3.5 bg-[var(--bg-subtle)] rounded-xl border border-[var(--border-hairline)]/60">
-                <span className="text-[11.5px] font-medium text-[var(--text-secondary)] block">
-                  Hoje registrado
-                </span>
-                <span className="font-mono-tabular text-[20px] font-medium text-[var(--text-primary)] block mt-1">
-                  {formatMinutesHuman(rhythmStats.todayMinutes)}
-                </span>
-                <span className="text-[11px] text-[var(--text-muted)] block mt-0.5">
-                  Meta diária: {dailyGoalHours}h
-                </span>
-              </div>
-
-              <div className="p-3.5 bg-[var(--bg-subtle)] rounded-xl border border-[var(--border-hairline)]/60">
-                <span className="text-[11.5px] font-medium text-[var(--text-secondary)] block">
-                  Esta semana
-                </span>
-                <span className="font-mono-tabular text-[20px] font-medium text-[var(--text-primary)] block mt-1">
-                  {formatMinutesHuman(rhythmStats.weekMinutes)}
-                </span>
-                <span className="text-[11px] text-[var(--accent-sage)] block mt-0.5">
-                  Desde segunda-feira
-                </span>
-              </div>
-            </div>
-
-            <Link
-              href="/planejador?focusTimer=1"
-              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-[10px] bg-[var(--accent-sage)] hover:bg-[var(--accent-sage-hover)] text-[#FAF8F5] text-[13.5px] font-medium transition-colors"
-            >
-              <Play size={16} weight="duotone" />
-              <span>Iniciar Cronômetro / Pomodoro</span>
-            </Link>
-          </section>
         </div>
 
-        {/* COLUNA DIREITA: Minicalendário + Tarefas + Último Simulado / Choque de Realidade */}
+        {/* COLUNA DIREITA */}
         <div className="lg:col-span-6 space-y-6">
-          {/* 3. MINICALENDÁRIO MENSAL + TAREFAS DO DIA */}
+          {/* 3. CALENDÁRIO COMPACTO (SEMANA) + EXPANSÍVEL (MÊS) + TAREFAS */}
           <section className="bg-[var(--bg-card)] rounded-2xl p-5 sm:p-6 border border-[var(--border-hairline)] space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -814,113 +852,190 @@ export function HomeDashboard() {
                   weight="duotone"
                   className="text-[var(--accent-sage)]"
                 />
-                <h2 className="font-editorial text-[20px] leading-tight text-[var(--text-primary)]">
-                  Calendário &amp; Tarefas
+                <h2 className="font-editorial text-[21px] leading-tight text-[var(--text-primary)]">
+                  Calendário &amp;{" "}
+                  <em className="italic font-normal">tarefas</em>
                 </h2>
               </div>
-              <span className="font-mono-tabular text-[11.5px] text-[var(--text-muted)]">
+              <span className="font-mono-tabular text-[11.5px] text-[var(--text-muted)] shrink-0">
                 {selectedDayDoneCount} de {selectedDayTasks.length} feitas
               </span>
             </div>
 
-            {/* Minicalendário Mensal Compacto */}
+            {/* Calendário com alternância suave Semanal <-> Mensal */}
             <div className="p-3.5 rounded-xl bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 space-y-2.5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-[13px] font-medium text-[var(--text-primary)]">
-                  {MONTH_NAMES_PT[calendarMonth.getMonth()]}{" "}
+                  {MONTH_NAMES_PT[visibleCalendarDate.getMonth()]}{" "}
                   <span className="font-mono-tabular text-[var(--text-muted)] font-normal">
-                    {calendarMonth.getFullYear()}
+                    {visibleCalendarDate.getFullYear()}
                   </span>
                 </span>
+
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() =>
-                      setCalendarMonth(
-                        (prev) =>
-                          new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
-                      )
+                    onClick={handleCalendarPrev}
+                    aria-label={
+                      calendarExpanded ? "Mês anterior" : "Semana anterior"
                     }
-                    aria-label="Mês anterior"
                     className="w-6 h-6 rounded-md hover:bg-[var(--bg-card)] flex items-center justify-center text-[var(--text-secondary)] cursor-pointer"
                   >
                     <CaretLeft size={13} weight="light" />
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      const now = new Date();
-                      setCalendarMonth(
-                        new Date(now.getFullYear(), now.getMonth(), 1)
-                      );
-                      setSelectedDateIso(todayIso);
-                    }}
+                    onClick={handleCalendarToday}
                     className="px-1.5 py-0.5 rounded text-[10.5px] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] cursor-pointer"
                   >
                     Hoje
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      setCalendarMonth(
-                        (prev) =>
-                          new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
-                      )
+                    onClick={handleCalendarNext}
+                    aria-label={
+                      calendarExpanded ? "Próximo mês" : "Próxima semana"
                     }
-                    aria-label="Próximo mês"
                     className="w-6 h-6 rounded-md hover:bg-[var(--bg-card)] flex items-center justify-center text-[var(--text-secondary)] cursor-pointer"
                   >
                     <CaretRight size={13} weight="light" />
                   </button>
+
+                  <span className="w-px h-3.5 bg-[var(--border-hairline)] mx-0.5" />
+
+                  <button
+                    type="button"
+                    onClick={handleToggleCalendarExpand}
+                    title={
+                      calendarExpanded
+                        ? "Recolher para semana atual"
+                        : "Expandir mês completo"
+                    }
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[10.5px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  >
+                    {calendarExpanded ? (
+                      <>
+                        <ArrowsInSimple size={11} weight="light" />
+                        <span>Recolher</span>
+                      </>
+                    ) : (
+                      <>
+                        <ArrowsOutSimple size={11} weight="light" />
+                        <span>Expandir</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-7 gap-1 text-center">
-                {WEEKDAY_INITIALS.map((letter, idx) => (
-                  <span
-                    key={idx}
-                    className="font-mono-tabular text-[10px] text-[var(--text-muted)] py-0.5"
+              <AnimatePresence mode="wait" initial={false}>
+                {!calendarExpanded ? (
+                  <motion.div
+                    key="week-view"
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.16 }}
+                    className="grid grid-cols-7 gap-1.5 text-center"
                   >
-                    {letter}
-                  </span>
-                ))}
+                    {compactWeekDays.map((cell) => {
+                      const isSelected = cell.iso === selectedDateIso;
+                      const isToday = cell.iso === todayIso;
 
-                {calendarCells.map((cell, idx) => {
-                  if (!cell) {
-                    return <span key={`empty-${idx}`} className="h-8" />;
-                  }
-                  const isSelected = cell.iso === selectedDateIso;
-                  const isToday = cell.iso === todayIso;
-
-                  return (
-                    <button
-                      key={cell.iso}
-                      type="button"
-                      onClick={() => setSelectedDateIso(cell.iso)}
-                      className={`h-8 rounded-lg flex flex-col items-center justify-center relative transition-colors cursor-pointer ${
-                        isSelected
-                          ? "bg-[var(--accent-sage)] text-[#FAF8F5] font-medium"
-                          : isToday
-                          ? "bg-[var(--bg-card)] border border-[var(--accent-sage)] text-[var(--text-primary)] font-medium"
-                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-card)]"
-                      }`}
-                    >
-                      <span className="font-mono-tabular text-[11.5px] leading-none">
-                        {cell.day}
-                      </span>
-                      {cell.hasTasks && (
-                        <span
-                          className={`w-1 h-1 rounded-full mt-0.5 ${
+                      return (
+                        <button
+                          key={cell.iso}
+                          type="button"
+                          onClick={() => setSelectedDateIso(cell.iso)}
+                          className={`py-2 rounded-xl flex flex-col items-center justify-center transition-colors cursor-pointer ${
                             isSelected
-                              ? "bg-[#FAF8F5]"
-                              : "bg-[var(--accent-sage)]"
+                              ? "bg-[var(--accent-sage)] text-[#FAF8F5] font-medium"
+                              : isToday
+                              ? "bg-[var(--bg-card)] border border-[var(--accent-sage)] text-[var(--text-primary)] font-medium"
+                              : "hover:bg-[var(--bg-card)] text-[var(--text-secondary)]"
                           }`}
-                        />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+                        >
+                          <span
+                            className={`font-mono-tabular text-[9.5px] ${
+                              isSelected
+                                ? "text-[#FAF8F5]/85"
+                                : "text-[var(--text-muted)]"
+                            }`}
+                          >
+                            {cell.abbr}
+                          </span>
+                          <span className="font-mono-tabular text-[13px] mt-0.5 leading-none">
+                            {cell.day}
+                          </span>
+                          <span
+                            className={`w-1 h-1 rounded-full mt-1 ${
+                              cell.hasTasks
+                                ? isSelected
+                                  ? "bg-[#FAF8F5]"
+                                  : "bg-[var(--accent-sage)]"
+                                : "opacity-0"
+                            }`}
+                          />
+                        </button>
+                      );
+                    })}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="month-view"
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.16 }}
+                    className="grid grid-cols-7 gap-1 text-center"
+                  >
+                    {WEEKDAY_INITIALS.map((letter, idx) => (
+                      <span
+                        key={idx}
+                        className="font-mono-tabular text-[10px] text-[var(--text-muted)] py-0.5"
+                      >
+                        {letter}
+                      </span>
+                    ))}
+
+                    {monthCells.map((cell, idx) => {
+                      if (!cell) {
+                        return <span key={`empty-${idx}`} className="h-8" />;
+                      }
+                      const isSelected = cell.iso === selectedDateIso;
+                      const isToday = cell.iso === todayIso;
+
+                      return (
+                        <button
+                          key={cell.iso}
+                          type="button"
+                          onClick={() => setSelectedDateIso(cell.iso)}
+                          className={`h-8 rounded-lg flex flex-col items-center justify-center relative transition-colors cursor-pointer ${
+                            isSelected
+                              ? "bg-[var(--accent-sage)] text-[#FAF8F5] font-medium"
+                              : isToday
+                              ? "bg-[var(--bg-card)] border border-[var(--accent-sage)] text-[var(--text-primary)] font-medium"
+                              : "text-[var(--text-secondary)] hover:bg-[var(--bg-card)]"
+                          }`}
+                        >
+                          <span className="font-mono-tabular text-[11.5px] leading-none">
+                            {cell.day}
+                          </span>
+                          {cell.hasTasks && (
+                            <span
+                              className={`w-1 h-1 rounded-full mt-0.5 ${
+                                isSelected
+                                  ? "bg-[#FAF8F5]"
+                                  : "bg-[var(--accent-sage)]"
+                              }`}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Lista de Tarefas do Dia Selecionado */}
@@ -958,7 +1073,12 @@ export function HomeDashboard() {
                         onClick={() => void handleToggleHomeTask(task)}
                         className="w-full text-left flex items-start gap-3 p-3 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 transition-colors cursor-pointer"
                       >
-                        <span
+                        <motion.span
+                          whileTap={{ scale: 0.85 }}
+                          animate={{
+                            scale: task.is_completed ? [1, 1.12, 1] : 1,
+                          }}
+                          transition={{ duration: 0.18 }}
                           className={`mt-0.5 w-4.5 h-4.5 rounded-[4px] border-[1.5px] flex items-center justify-center shrink-0 transition-colors ${
                             task.is_completed
                               ? "bg-[var(--accent-sage)] border-[var(--accent-sage)] text-[#FAF8F5]"
@@ -968,11 +1088,11 @@ export function HomeDashboard() {
                           {task.is_completed && (
                             <Check size={11} weight="bold" />
                           )}
-                        </span>
+                        </motion.span>
 
                         <div className="min-w-0 flex-1">
                           <p
-                            className={`text-[13.5px] leading-snug ${
+                            className={`text-[13.5px] leading-snug transition-colors ${
                               task.is_completed
                                 ? "line-through text-[var(--text-muted)]"
                                 : "text-[var(--text-primary)] font-medium"
@@ -996,7 +1116,6 @@ export function HomeDashboard() {
                 </div>
               )}
 
-              {/* Input de tarefa rápida direto na Home */}
               <form
                 onSubmit={(e) => void handleAddQuickTask(e)}
                 className="flex gap-2 pt-1"
@@ -1020,7 +1139,7 @@ export function HomeDashboard() {
             </div>
           </section>
 
-          {/* 4. ÚLTIMO SIMULADO / CHOQUE DE REALIDADE */}
+          {/* 4. CHOQUE DE REALIDADE COM GRÁFICO REAL DE CURVA RECHARTS */}
           <section className="bg-[var(--bg-card)] rounded-2xl p-5 sm:p-6 border border-[var(--border-hairline)] space-y-4">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -1029,139 +1148,39 @@ export function HomeDashboard() {
                   weight="duotone"
                   className="text-[var(--accent-terracotta)]"
                 />
-                <h2 className="font-editorial text-[20px] leading-tight text-[var(--text-primary)]">
-                  {latestExamSummary
-                    ? "Último Simulado & Realidade"
-                    : "Choque de Realidade"}
+                <h2 className="font-editorial text-[21px] leading-tight text-[var(--text-primary)]">
+                  Choque de <em className="italic font-normal">realidade</em>
                 </h2>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] border border-[var(--border-hairline)] font-mono-tabular text-[11px] text-[var(--text-secondary)]">
-                {latestExamSummary
-                  ? formatShortDatePtBr(latestExamSummary.exam.date)
-                  : "Geral"}
+              <span className="px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] border border-[var(--border-hairline)] font-mono-tabular text-[11px] text-[var(--text-secondary)] shrink-0">
+                {engine.overallSummary.totalQuestions}{" "}
+                {engine.overallSummary.totalQuestions === 1
+                  ? "questão"
+                  : "questões"}
               </span>
             </div>
 
-            {latestExamSummary && latestExamSummary.isXray ? (
-              <div className="space-y-3">
-                <p className="text-[13.5px] font-medium text-[var(--text-primary)]">
-                  {latestExamSummary.exam.title}
-                </p>
-                <div className="p-4 bg-[var(--bg-subtle)] rounded-xl border border-[var(--border-hairline)]/60 space-y-3">
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-[12.5px]">
-                      <span className="text-[var(--text-secondary)]">
-                        Acerto Bruto
-                      </span>
-                      <span className="font-mono-tabular font-medium text-[var(--text-primary)]">
-                        {latestExamSummary.raw}/{latestExamSummary.total} (
-                        {latestExamSummary.rawPct.toFixed(1)}%)
-                      </span>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-[var(--border-hairline)] overflow-hidden">
-                      <div
-                        className="h-full bg-[var(--accent-slate)] rounded-full"
-                        style={{ width: `${latestExamSummary.rawPct}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-[12.5px]">
-                      <span className="text-[var(--text-secondary)]">
-                        Acerto Real (Sem chutes)
-                      </span>
-                      <span className="font-mono-tabular font-semibold text-[var(--accent-terracotta)]">
-                        {latestExamSummary.real}/{latestExamSummary.total} (
-                        {latestExamSummary.realPct.toFixed(1)}%)
-                      </span>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-[var(--border-hairline)] overflow-hidden">
-                      <div
-                        className="h-full bg-[var(--accent-terracotta)] rounded-full"
-                        style={{ width: `${latestExamSummary.realPct}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2 border-t border-[var(--border-hairline)] text-[11.5px]">
-                    <span className="text-[var(--text-muted)]">
-                      Diferença por chutes ({latestExamSummary.guesses} questões)
-                    </span>
-                    <span className="font-mono-tabular font-medium text-[var(--accent-terracotta)]">
-                      -{latestExamSummary.diffPct.toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ) : engine.overallSummary.totalQuestions > 0 ? (
-              <div className="p-4 bg-[var(--bg-subtle)] rounded-xl border border-[var(--border-hairline)]/60 space-y-3">
-                {latestExamSummary && (
-                  <p className="text-[12.5px] text-[var(--text-secondary)]">
-                    Último simulado:{" "}
-                    <strong className="text-[var(--text-primary)]">
-                      {latestExamSummary.exam.title}
-                    </strong>{" "}
-                    ({latestExamSummary.raw} acertos brutos)
-                  </p>
-                )}
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-[12.5px]">
-                    <span className="text-[var(--text-secondary)]">
-                      Média Bruta (Geral)
-                    </span>
-                    <span className="font-mono-tabular font-medium text-[var(--text-primary)]">
-                      {engine.overallSummary.rawAccuracyPct.toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-[var(--border-hairline)] overflow-hidden">
-                    <div
-                      className="h-full bg-[var(--accent-slate)] rounded-full"
-                      style={{
-                        width: `${engine.overallSummary.rawAccuracyPct}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-[12.5px]">
-                    <span className="text-[var(--text-secondary)]">
-                      Média Real (Sem chutes)
-                    </span>
-                    <span className="font-mono-tabular font-semibold text-[var(--accent-terracotta)]">
-                      {engine.overallSummary.realAccuracyPct.toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-[var(--border-hairline)] overflow-hidden">
-                    <div
-                      className="h-full bg-[var(--accent-terracotta)] rounded-full"
-                      style={{
-                        width: `${engine.overallSummary.realAccuracyPct}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-[var(--border-hairline)] text-[11.5px]">
-                  <span className="text-[var(--text-muted)]">
-                    Viés de Ilusão de Competência
-                  </span>
-                  <span className="font-mono-tabular font-medium text-[var(--accent-terracotta)]">
-                    -{engine.overallSummary.guessIllusionPct.toFixed(1)}% em
-                    chutes
-                  </span>
-                </div>
-              </div>
+            {engine.overallSummary.totalQuestions > 0 ? (
+              <RealityShockChart
+                exerciseLogs={exerciseLogs}
+                mockExams={mockExams}
+                mockQuestions={mockQuestions}
+                topics={topics}
+                overallRawPct={engine.overallSummary.rawAccuracyPct}
+                overallRealPct={engine.overallSummary.realAccuracyPct}
+                guessIllusionPct={engine.overallSummary.guessIllusionPct}
+                guessesTotal={engine.overallSummary.guessesTotal}
+                height={170}
+              />
             ) : (
               <div className="p-5 rounded-xl bg-[var(--bg-subtle)]/65 border border-[var(--border-hairline)]/60 text-center space-y-2">
                 <p className="text-[13.5px] font-medium text-[var(--text-primary)]">
                   Nenhum simulado ou bateria registrada ainda
                 </p>
-                <p className="text-[12.5px] text-[var(--text-secondary)]">
-                  Assim que registrar seu primeiro simulado Raio-X ou lista de
-                  exercícios, verá aqui a diferença real entre o que você
-                  acertou sabendo e o que foi no chute.
+                <p className="text-[12.5px] text-[var(--text-secondary)] leading-relaxed">
+                  Assim que registrar exercícios ou um simulado Raio-X, você
+                  verá aqui a curva real comparando acertos brutos e acertos sem
+                  chute.
                 </p>
               </div>
             )}

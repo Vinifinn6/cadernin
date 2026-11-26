@@ -11,9 +11,12 @@ import {
   Moon,
   SpinnerGap,
   Sun,
+  Trash,
   User,
 } from "@phosphor-icons/react";
 import { useProfileTheme } from "@/components/providers/ProfileThemeProvider";
+import { ImageCropModal } from "@/components/shared/ImageCropModal";
+import type { CropAreaPixels, ProfileImageKind } from "@/lib/image-compress";
 
 export function ProfileAppearanceTab() {
   const {
@@ -27,12 +30,25 @@ export function ProfileAppearanceTab() {
     updateDisplayName,
     updateSubtitle,
     updateDailyGoalMinutes,
-    uploadProfileImage,
+    uploadCroppedProfileImage,
+    removeProfileImage,
     refreshProfile,
   } = useProfileTheme();
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
+
+  const [cropState, setCropState] = useState<{
+    open: boolean;
+    kind: ProfileImageKind;
+    imageSrc: string | null;
+    originalSizeBytes: number;
+  }>({
+    open: false,
+    kind: "avatar",
+    imageSrc: null,
+    originalSizeBytes: 0,
+  });
 
   const [appNameInput, setAppNameInput] = useState(profile.app_name);
   const [nameInput, setNameInput] = useState(profile.display_name);
@@ -92,14 +108,41 @@ export function ProfileAppearanceTab() {
     }
   };
 
-  const handleFileChange = async (
-    kind: "avatar" | "header",
+  const handleFileChange = (
+    kind: ProfileImageKind,
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
-    await uploadProfileImage(kind, file);
+    if (!file || !file.type.startsWith("image/")) return;
+    const objectUrl = URL.createObjectURL(file);
+    setCropState({
+      open: true,
+      kind,
+      imageSrc: objectUrl,
+      originalSizeBytes: file.size,
+    });
+  };
+
+  const closeCropModal = () => {
+    if (cropState.imageSrc) URL.revokeObjectURL(cropState.imageSrc);
+    setCropState({
+      open: false,
+      kind: "avatar",
+      imageSrc: null,
+      originalSizeBytes: 0,
+    });
+  };
+
+  const handleConfirmCrop = async (croppedAreaPixels: CropAreaPixels) => {
+    if (!cropState.imageSrc) return;
+    await uploadCroppedProfileImage(
+      cropState.kind,
+      cropState.imageSrc,
+      croppedAreaPixels,
+      cropState.originalSizeBytes
+    );
+    closeCropModal();
   };
 
   const initials = profile.display_name
@@ -255,21 +298,34 @@ export function ProfileAppearanceTab() {
                   avatar.webp · máx. 300×300px
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={isUploadingAvatar}
-                onClick={() => avatarInputRef.current?.click()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] border border-[var(--border-hairline)] text-[12px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-60"
-              >
-                {isUploadingAvatar ? (
-                  <SpinnerGap size={13} weight="light" className="animate-spin" />
-                ) : (
-                  <Camera size={13} weight="light" />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isUploadingAvatar}
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] border border-[var(--border-hairline)] text-[12px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-60"
+                >
+                  {isUploadingAvatar ? (
+                    <SpinnerGap size={13} weight="light" className="animate-spin" />
+                  ) : (
+                    <Camera size={13} weight="light" />
+                  )}
+                  <span>
+                    {isUploadingAvatar ? "Enviando..." : "Trocar foto"}
+                  </span>
+                </button>
+                {profile.avatar_url && (
+                  <button
+                    type="button"
+                    onClick={() => void removeProfileImage("avatar")}
+                    title="Remover foto de perfil"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--border-hairline)] text-[12px] text-[var(--accent-terracotta)] hover:bg-[var(--accent-terracotta-soft)] transition-colors cursor-pointer"
+                  >
+                    <Trash size={13} weight="light" />
+                    <span>Remover</span>
+                  </button>
                 )}
-                <span>
-                  {isUploadingAvatar ? "Enviando..." : "Trocar foto"}
-                </span>
-              </button>
+              </div>
             </div>
           </div>
 
@@ -297,21 +353,33 @@ export function ProfileAppearanceTab() {
                   header.webp · máx. 1600×500px
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={isUploadingHeader}
-                onClick={() => headerInputRef.current?.click()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] border border-[var(--border-hairline)] text-[12px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-60 shrink-0"
-              >
-                {isUploadingHeader ? (
-                  <SpinnerGap size={13} weight="light" className="animate-spin" />
-                ) : (
-                  <Camera size={13} weight="light" />
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={isUploadingHeader}
+                  onClick={() => headerInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] border border-[var(--border-hairline)] text-[12px] font-medium text-[var(--text-primary)] transition-colors cursor-pointer disabled:opacity-60"
+                >
+                  {isUploadingHeader ? (
+                    <SpinnerGap size={13} weight="light" className="animate-spin" />
+                  ) : (
+                    <Camera size={13} weight="light" />
+                  )}
+                  <span>
+                    {isUploadingHeader ? "Enviando..." : "Trocar capa"}
+                  </span>
+                </button>
+                {profile.header_url && (
+                  <button
+                    type="button"
+                    onClick={() => void removeProfileImage("header")}
+                    title="Remover capa"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--border-hairline)] text-[12px] text-[var(--accent-terracotta)] hover:bg-[var(--accent-terracotta-soft)] transition-colors cursor-pointer"
+                  >
+                    <Trash size={13} weight="light" />
+                  </button>
                 )}
-                <span>
-                  {isUploadingHeader ? "Enviando..." : "Trocar capa"}
-                </span>
-              </button>
+              </div>
             </div>
           </div>
         </div>
@@ -427,6 +495,14 @@ export function ProfileAppearanceTab() {
           </span>
         </div>
       </section>
+
+      <ImageCropModal
+        open={cropState.open}
+        kind={cropState.kind}
+        imageSrc={cropState.imageSrc}
+        onCancel={closeCropModal}
+        onConfirm={handleConfirmCrop}
+      />
     </div>
   );
 }

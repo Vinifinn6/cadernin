@@ -9,8 +9,10 @@ import React, {
   useState,
 } from "react";
 import {
+  compressCroppedProfileImage,
   compressProfileImage,
   formatFileSize,
+  type CropAreaPixels,
   type ProfileImageKind,
 } from "@/lib/image-compress";
 import {
@@ -67,6 +69,13 @@ interface ProfileThemeContextValue {
     auto_mode_urgency_weight: number;
   }) => Promise<{ ok: boolean; errorMessage?: string }>;
   uploadProfileImage: (kind: ProfileImageKind, file: File) => Promise<void>;
+  uploadCroppedProfileImage: (
+    kind: ProfileImageKind,
+    imageSrc: string,
+    croppedAreaPixels: CropAreaPixels,
+    originalSizeBytes?: number
+  ) => Promise<void>;
+  removeProfileImage: (kind: ProfileImageKind) => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -383,6 +392,94 @@ export function ProfileThemeProvider({
     [profile]
   );
 
+  const uploadCroppedProfileImage = useCallback(
+    async (
+      kind: ProfileImageKind,
+      imageSrc: string,
+      croppedAreaPixels: CropAreaPixels,
+      originalSizeBytes = 0
+    ) => {
+      const label = kind === "avatar" ? "Foto de perfil" : "Capa do cabeçalho";
+
+      try {
+        setUploadFeedback({
+          kind,
+          status: "compressing",
+          message: `Recortando e comprimindo ${label.toLowerCase()} para WebP...`,
+        });
+
+        const compressed = await compressCroppedProfileImage(
+          imageSrc,
+          croppedAreaPixels,
+          kind,
+          originalSizeBytes
+        );
+
+        setProfile((prev) => ({
+          ...prev,
+          [kind === "avatar" ? "avatar_url" : "header_url"]: compressed.dataUrl,
+        }));
+
+        setUploadFeedback({
+          kind,
+          status: "uploading",
+          message: `Enviando ${
+            kind === "avatar" ? "avatar.webp" : "header.webp"
+          } (${formatFileSize(compressed.sizeBytes)}, ${compressed.width}×${
+            compressed.height
+          }px)...`,
+        });
+
+        const result = await uploadProfileAsset(
+          kind,
+          compressed.blob,
+          compressed.dataUrl,
+          profile
+        );
+
+        setProfile(result.profile);
+
+        if (result.synced) {
+          setSupabaseStatus("connected");
+          setUploadFeedback({
+            kind,
+            status: "success",
+            message: `${label} salva em WebP · ${formatFileSize(
+              compressed.sizeBytes
+            )} (${compressed.width}×${compressed.height}px)`,
+          });
+        } else {
+          setUploadFeedback({
+            kind,
+            status: "warning",
+            message: `${label} recortada (${formatFileSize(
+              compressed.sizeBytes
+            )}) em preview local. ${result.errorMessage ?? ""}`.trim(),
+          });
+        }
+      } catch (err) {
+        setUploadFeedback({
+          kind,
+          status: "error",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Não foi possível processar a imagem recortada.",
+        });
+      }
+    },
+    [profile]
+  );
+
+  const removeProfileImage = useCallback(
+    async (kind: ProfileImageKind) => {
+      const fieldKey = kind === "avatar" ? "avatar_url" : "header_url";
+      const res = await saveUserProfilePatch(profile, { [fieldKey]: null });
+      setProfile(res.profile);
+    },
+    [profile]
+  );
+
   const clearUploadFeedback = useCallback(() => {
     setUploadFeedback(null);
   }, []);
@@ -405,6 +502,8 @@ export function ProfileThemeProvider({
       updatePrioritySettings,
       updateFsrsSettings,
       uploadProfileImage,
+      uploadCroppedProfileImage,
+      removeProfileImage,
       refreshProfile,
     }),
     [
@@ -424,6 +523,8 @@ export function ProfileThemeProvider({
       updatePrioritySettings,
       updateFsrsSettings,
       uploadProfileImage,
+      uploadCroppedProfileImage,
+      removeProfileImage,
       refreshProfile,
     ]
   );

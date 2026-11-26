@@ -1,5 +1,12 @@
 export type ProfileImageKind = "avatar" | "header";
 
+export interface CropAreaPixels {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface CompressedImageResult {
   blob: Blob;
   dataUrl: string;
@@ -19,13 +26,24 @@ const IMAGE_CONSTRAINTS: Record<
   avatar: {
     maxWidth: 300,
     maxHeight: 300,
-    aspectCrop: 1, // Recorte central quadrado 1:1 para foto de perfil
+    aspectCrop: 1,
   },
   header: {
     maxWidth: 1600,
     maxHeight: 500,
   },
 };
+
+function loadImageFromSrc(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () =>
+      reject(new Error("Não foi possível ler a imagem selecionada."));
+    img.src = src;
+  });
+}
 
 function loadImageElement(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -82,77 +100,16 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/**
- * Comprime e redimensiona uma imagem inteiramente no navegador usando Canvas API.
- * - Avatar: até 300x300px (recorte central quadrado), WebP, alvo < 200KB.
- * - Header: até 1600x500px (enquadramento editorial mantendo proporção/recorte suave), WebP, alvo < 200KB.
- */
-export async function compressProfileImage(
-  file: File,
-  kind: ProfileImageKind
+async function encodeCanvasUnderLimit(
+  canvas: HTMLCanvasElement,
+  originalSizeBytes: number
 ): Promise<CompressedImageResult> {
-  if (!file.type.startsWith("image/")) {
-    throw new Error("Selecione um arquivo de imagem válido (JPG, PNG ou WebP).");
-  }
+  let targetWidth = canvas.width;
+  let targetHeight = canvas.height;
 
-  const img = await loadImageElement(file);
-  const { maxWidth, maxHeight, aspectCrop } = IMAGE_CONSTRAINTS[kind];
-
-  let sx = 0;
-  let sy = 0;
-  let sw = img.naturalWidth;
-  let sh = img.naturalHeight;
-  let targetWidth = sw;
-  let targetHeight = sh;
-
-  if (aspectCrop) {
-    // Recorte central quadrado para avatar
-    const side = Math.min(sw, sh);
-    sx = Math.floor((sw - side) / 2);
-    sy = Math.floor((sh - side) / 2);
-    sw = side;
-    sh = side;
-
-    const finalSide = Math.min(side, maxWidth, maxHeight);
-    targetWidth = finalSide;
-    targetHeight = finalSide;
-  } else {
-    // Banner: garante dimensão máxima de 1600x500px.
-    // Se a imagem for muito alta (ex: foto vertical), faz um recorte panorâmico central suave (máx 16:5 ou 16:6)
-    // para aproveitar a resolução horizontal sem desperdiçar bytes.
-    const currentRatio = sw / sh;
-    const minBannerRatio = 2.4;
-
-    if (currentRatio < minBannerRatio) {
-      const desiredHeight = Math.round(sw / 3.2);
-      if (desiredHeight < sh) {
-        sy = Math.floor((sh - desiredHeight) / 2);
-        sh = desiredHeight;
-      }
-    }
-
-    const scale = Math.min(1, maxWidth / sw, maxHeight / sh);
-    targetWidth = Math.max(1, Math.round(sw * scale));
-    targetHeight = Math.max(1, Math.round(sh * scale));
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("Contexto 2D do Canvas indisponível neste navegador.");
-  }
-
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
-
-  // Tenta qualidade 0.8 primeiro e reduz gradualmente se exceder 200KB
-  const qualitySteps = [0.8, 0.72, 0.64, 0.56, 0.48, 0.4];
+  const qualitySteps = [0.82, 0.74, 0.66, 0.58, 0.48, 0.4];
   let bestBlob: Blob | null = null;
-  let qualityUsed = 0.8;
+  let qualityUsed = 0.82;
 
   for (const q of qualitySteps) {
     const candidate = await canvasToWebpBlob(canvas, q);
@@ -163,7 +120,6 @@ export async function compressProfileImage(
     }
   }
 
-  // Fallback extremo: se ainda passar de 200KB (imagem muito ruidosa), reduz 20% das dimensões
   if (bestBlob && bestBlob.size > MAX_TARGET_BYTES) {
     const smallerCanvas = document.createElement("canvas");
     smallerCanvas.width = Math.max(1, Math.round(targetWidth * 0.8));
@@ -198,9 +154,109 @@ export async function compressProfileImage(
     width: targetWidth,
     height: targetHeight,
     sizeBytes: bestBlob.size,
-    originalSizeBytes: file.size,
+    originalSizeBytes,
     qualityUsed,
   };
+}
+
+/**
+ * Recorta a área exata selecionada pelo usuário no modal interativo,
+ * redimensiona dentro do limite (Avatar 300x300, Header 1600x500) e comprime para WebP (< 200KB).
+ */
+export async function compressCroppedProfileImage(
+  imageSrc: string,
+  croppedAreaPixels: CropAreaPixels,
+  kind: ProfileImageKind,
+  originalSizeBytes = 0
+): Promise<CompressedImageResult> {
+  const img = await loadImageFromSrc(imageSrc);
+  const { maxWidth, maxHeight } = IMAGE_CONSTRAINTS[kind];
+
+  const sx = Math.max(0, Math.round(croppedAreaPixels.x));
+  const sy = Math.max(0, Math.round(croppedAreaPixels.y));
+  const sw = Math.max(1, Math.round(croppedAreaPixels.width));
+  const sh = Math.max(1, Math.round(croppedAreaPixels.height));
+
+  const scale = Math.min(1, maxWidth / sw, maxHeight / sh);
+  const targetWidth = Math.max(1, Math.round(sw * scale));
+  const targetHeight = Math.max(1, Math.round(sh * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Contexto 2D do Canvas indisponível neste navegador.");
+  }
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+
+  return encodeCanvasUnderLimit(canvas, originalSizeBytes);
+}
+
+/**
+ * Compressão direta sem modal (mantida por compatibilidade).
+ */
+export async function compressProfileImage(
+  file: File,
+  kind: ProfileImageKind
+): Promise<CompressedImageResult> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Selecione um arquivo de imagem válido (JPG, PNG ou WebP).");
+  }
+
+  const img = await loadImageElement(file);
+  const { maxWidth, maxHeight, aspectCrop } = IMAGE_CONSTRAINTS[kind];
+
+  let sx = 0;
+  let sy = 0;
+  let sw = img.naturalWidth;
+  let sh = img.naturalHeight;
+  let targetWidth = sw;
+  let targetHeight = sh;
+
+  if (aspectCrop) {
+    const side = Math.min(sw, sh);
+    sx = Math.floor((sw - side) / 2);
+    sy = Math.floor((sh - side) / 2);
+    sw = side;
+    sh = side;
+
+    const finalSide = Math.min(side, maxWidth, maxHeight);
+    targetWidth = finalSide;
+    targetHeight = finalSide;
+  } else {
+    const currentRatio = sw / sh;
+    if (currentRatio < 2.4) {
+      const desiredHeight = Math.round(sw / 3.2);
+      if (desiredHeight < sh) {
+        sy = Math.floor((sh - desiredHeight) / 2);
+        sh = desiredHeight;
+      }
+    }
+
+    const scale = Math.min(1, maxWidth / sw, maxHeight / sh);
+    targetWidth = Math.max(1, Math.round(sw * scale));
+    targetHeight = Math.max(1, Math.round(sh * scale));
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Contexto 2D do Canvas indisponível neste navegador.");
+  }
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+
+  return encodeCanvasUnderLimit(canvas, file.size);
 }
 
 export function formatFileSize(bytes: number): string {

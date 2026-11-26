@@ -13,12 +13,11 @@ import {
   WarningCircle,
 } from "@phosphor-icons/react";
 import { useProfileTheme } from "@/components/providers/ProfileThemeProvider";
-import {
-  ConsistencyHeatmap,
-  type DailyActivityData,
-} from "@/components/estatisticas/ConsistencyHeatmap";
+import { ConsistencyHeatmap } from "@/components/estatisticas/ConsistencyHeatmap";
 import { SimuladosEvolutionChart } from "@/components/estatisticas/SimuladosEvolutionChart";
+import { RealityShockChart } from "@/components/estatisticas/RealityShockChart";
 import { StatsPageSkeleton } from "@/components/shared/EditorialSkeleton";
+import { buildDailyActivityMap } from "@/lib/activityCalendar";
 import { fetchCurriculumData } from "@/lib/curriculum-service";
 import { fetchEnemSkills } from "@/lib/enem-service";
 import { fetchExerciseLogs } from "@/lib/exercises-service";
@@ -177,27 +176,17 @@ export function StatisticsWorkspace() {
     };
   }, [engine.overallSummary, mockQuestions, examMap]);
 
-  // Mapa diário de consistência (Tempo Estudado + Questões Feitas)
-  const dailyActivityMap = useMemo(() => {
-    const map: Record<string, DailyActivityData> = {};
-    const ensure = (iso: string) => {
-      if (!map[iso]) map[iso] = { date: iso, minutes: 0, questions: 0 };
-      return map[iso];
-    };
-
-    for (const session of studySessions) {
-      ensure(session.date).minutes += session.duration_minutes;
-    }
-    for (const log of exerciseLogs) {
-      ensure(log.date).questions += log.total_questions;
-    }
-    for (const q of mockQuestions) {
-      const examDate = examMap.get(q.mock_exam_id)?.date;
-      if (examDate) ensure(examDate).questions += 1;
-    }
-
-    return map;
-  }, [studySessions, exerciseLogs, mockQuestions, examMap]);
+  // Mapa diário de consistência (Tempo Estudado + Exercícios + Simulados, sem shift UTC)
+  const dailyActivityMap = useMemo(
+    () =>
+      buildDailyActivityMap({
+        studySessions,
+        exerciseLogs,
+        mockExams,
+        mockQuestions,
+      }),
+    [studySessions, exerciseLogs, mockExams, mockQuestions]
+  );
 
   const summary = engine.overallSummary;
 
@@ -526,51 +515,17 @@ export function StatisticsWorkspace() {
                 </span>
               </div>
 
-              <div className="p-4 rounded-xl bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 space-y-3.5">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[13px]">
-                    <span className="text-[var(--text-secondary)]">
-                      Acerto Bruto (Gabarito)
-                    </span>
-                    <span className="font-mono-tabular font-medium text-[var(--text-primary)]">
-                      {summary.rawAccuracyPct.toFixed(1)}% ({summary.rawCorrect})
-                    </span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-[var(--border-hairline)] overflow-hidden">
-                    <div
-                      className="h-full bg-[var(--accent-slate)] rounded-full"
-                      style={{ width: `${summary.rawAccuracyPct}%` }}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[13px]">
-                    <span className="text-[var(--text-secondary)]">
-                      Acerto Real (Sem chutes)
-                    </span>
-                    <span className="font-mono-tabular font-semibold text-[var(--accent-sage)]">
-                      {summary.realAccuracyPct.toFixed(1)}% (
-                      {summary.realCorrect})
-                    </span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-[var(--border-hairline)] overflow-hidden">
-                    <div
-                      className="h-full bg-[var(--accent-sage)] rounded-full"
-                      style={{ width: `${summary.realAccuracyPct}%` }}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2.5 border-t border-[var(--border-hairline)] text-[12px]">
-                  <span className="text-[var(--text-muted)]">
-                    Viés de Ilusão de Competência
-                  </span>
-                  <span className="font-mono-tabular font-medium text-[var(--accent-terracotta)]">
-                    -{summary.guessIllusionPct.toFixed(1)}% em chutes
-                  </span>
-                </div>
-              </div>
+              <RealityShockChart
+                exerciseLogs={exerciseLogs}
+                mockExams={mockExams}
+                mockQuestions={mockQuestions}
+                topics={topics}
+                overallRawPct={summary.rawAccuracyPct}
+                overallRealPct={summary.realAccuracyPct}
+                guessIllusionPct={summary.guessIllusionPct}
+                guessesTotal={summary.guessesTotal}
+                height={180}
+              />
 
               {/* Breakdown dos 3 Níveis de Chute */}
               <div className="space-y-2">
@@ -713,8 +668,8 @@ export function StatisticsWorkspace() {
 
             <ConsistencyHeatmap
               dailyMap={dailyActivityMap}
-              weeksCount={52}
-              defaultMetric="minutes"
+              annual
+              defaultMetric="combined"
               showMetricToggle
             />
           </section>

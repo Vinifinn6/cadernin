@@ -4,6 +4,7 @@ import "./globals.css";
 import { ProfileThemeProvider } from "@/components/providers/ProfileThemeProvider";
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { PwaRegister } from "@/components/providers/PwaRegister";
+import { MotionConfigProvider } from "@/components/providers/MotionConfigProvider";
 import { AppShell } from "@/components/layout/AppShell";
 
 const newsreader = Newsreader({
@@ -94,11 +95,13 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         <PwaRegister />
-        <ToastProvider>
-          <ProfileThemeProvider>
-            <AppShell>{children}</AppShell>
-          </ProfileThemeProvider>
-        </ToastProvider>
+        <MotionConfigProvider>
+          <ToastProvider>
+            <ProfileThemeProvider>
+              <AppShell>{children}</AppShell>
+            </ProfileThemeProvider>
+          </ToastProvider>
+        </MotionConfigProvider>
       </body>
     </html>
   );

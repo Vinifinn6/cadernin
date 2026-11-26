@@ -33,6 +33,7 @@ import {
   type MockExamInput,
   updateMockExam,
 } from "@/lib/mock-exams-service";
+import { groupMockExams } from "@/lib/mockGrouping";
 import { useToast } from "@/components/providers/ToastProvider";
 import { ListRowsSkeleton } from "@/components/shared/EditorialSkeleton";
 import type {
@@ -49,15 +50,6 @@ function formatDatePtBr(iso: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!match) return iso;
   return `${match[3]}/${match[2]}/${match[1]}`;
-}
-
-function hasAnyTri(exam: MockExam): boolean {
-  return (
-    exam.tri_lc !== null ||
-    exam.tri_ch !== null ||
-    exam.tri_cn !== null ||
-    exam.tri_mt !== null
-  );
 }
 
 export function SimuladosWorkspace() {
@@ -125,6 +117,11 @@ export function SimuladosWorkspace() {
     }
     return map;
   }, [questions]);
+
+  const groupedExams = useMemo(
+    () => groupMockExams(exams, questions),
+    [exams, questions]
+  );
 
   const activeXrayExam = useMemo(
     () => exams.find((e) => e.id === activeXrayExamId) ?? null,
@@ -319,36 +316,31 @@ export function SimuladosWorkspace() {
         </section>
       ) : (
         <div className="space-y-4">
-          {exams.map((exam) => {
-            const examQs = questionsByExam.get(exam.id) ?? [];
-            const isXray = exam.mode === "xray";
-            const triDone = hasAnyTri(exam);
+          {groupedExams.map((group) => {
+            const isXray = group.mode === "xray";
+            const triDone =
+              group.triByArea.tri_lc !== null ||
+              group.triByArea.tri_ch !== null ||
+              group.triByArea.tri_cn !== null ||
+              group.triByArea.tri_mt !== null;
 
-            const xrayReal = examQs.filter(
-              (q) => q.outcome === "real_correct"
-            ).length;
-            const xrayGuesses = examQs.filter(
-              (q) =>
-                q.outcome === "guess_1" ||
-                q.outcome === "guess_2" ||
-                q.outcome === "guess_3"
-            ).length;
-            const xrayRaw = xrayReal + xrayGuesses;
+            const singlePart = !group.isGrouped ? group.parts[0] : null;
+            const hasAnyScore =
+              group.scoresByArea.score_lc !== null ||
+              group.scoresByArea.score_ch !== null ||
+              group.scoresByArea.score_cn !== null ||
+              group.scoresByArea.score_mt !== null;
 
-            const expressRawTotal =
-              (exam.score_lc ?? 0) +
-              (exam.score_ch ?? 0) +
-              (exam.score_cn ?? 0) +
-              (exam.score_mt ?? 0);
-            const hasExpressScores =
-              exam.score_lc !== null ||
-              exam.score_ch !== null ||
-              exam.score_cn !== null ||
-              exam.score_mt !== null;
+            const tris = [
+              group.triByArea.tri_lc,
+              group.triByArea.tri_ch,
+              group.triByArea.tri_cn,
+              group.triByArea.tri_mt,
+            ].filter((v): v is number => v !== null);
 
             return (
               <article
-                key={exam.id}
+                key={group.id}
                 className="bg-[var(--bg-card)] rounded-2xl p-5 border border-[var(--border-hairline)] hover:border-[var(--border-strong)] transition-colors space-y-4"
               >
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
@@ -369,19 +361,25 @@ export function SimuladosWorkspace() {
                         {isXray ? "Raio-X" : "Express"}
                       </span>
 
+                      {group.isGrouped && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[var(--accent-sage-soft)] text-[var(--accent-sage)] font-mono-tabular text-[11px] font-medium">
+                          {group.parts.length} dias agrupados
+                        </span>
+                      )}
+
                       <span className="font-mono-tabular text-[12px] text-[var(--text-muted)]">
-                        {formatDatePtBr(exam.date)}
+                        {formatDatePtBr(group.date)}
                       </span>
 
-                      {/* Badge TRI preenchida ou pendente */}
                       <button
                         type="button"
                         onClick={() => {
-                          if (isXray) {
+                          const targetExam = group.parts[0].exam;
+                          if (targetExam.mode === "xray") {
                             setActiveXrayInitialGrid(undefined);
-                            setActiveXrayExamId(exam.id);
+                            setActiveXrayExamId(targetExam.id);
                           } else {
-                            setEditingExpressExam(exam);
+                            setEditingExpressExam(targetExam);
                             setExpressModalOpen(true);
                           }
                         }}
@@ -402,85 +400,92 @@ export function SimuladosWorkspace() {
                     </div>
 
                     <h2 className="font-editorial text-[22px] leading-tight text-[var(--text-primary)]">
-                      {exam.title}
+                      {group.displayTitle}
                     </h2>
                   </div>
 
-                  {/* Ações */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    {isXray ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveXrayInitialGrid(undefined);
-                          setActiveXrayExamId(exam.id);
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-[10px] bg-[var(--accent-sage)] hover:bg-[var(--accent-sage-hover)] text-[#FAF8F5] text-[12.5px] font-medium cursor-pointer"
-                      >
-                        <span>Abrir Cartão-Resposta</span>
-                        <ArrowRight size={14} weight="light" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingExpressExam(exam);
-                          setExpressModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-[10px] border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] text-[12.5px] font-medium text-[var(--text-primary)] cursor-pointer"
-                      >
-                        <PencilSimple size={14} weight="light" />
-                        <span>Editar / TRI</span>
-                      </button>
-                    )}
+                  {/* Ações para simulado individual (quando 1 parte) */}
+                  {singlePart && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      {singlePart.exam.mode === "xray" ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveXrayInitialGrid(undefined);
+                            setActiveXrayExamId(singlePart.exam.id);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-[10px] bg-[var(--accent-sage)] hover:bg-[var(--accent-sage-hover)] text-[#FAF8F5] text-[12.5px] font-medium cursor-pointer"
+                        >
+                          <span>Abrir Cartão-Resposta</span>
+                          <ArrowRight size={14} weight="light" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingExpressExam(singlePart.exam);
+                            setExpressModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-[10px] border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] text-[12.5px] font-medium text-[var(--text-primary)] cursor-pointer"
+                        >
+                          <PencilSimple size={14} weight="light" />
+                          <span>Editar / TRI</span>
+                        </button>
+                      )}
 
-                    {confirmDeleteId === exam.id ? (
-                      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[var(--accent-terracotta-soft)] text-[12px]">
+                      {confirmDeleteId === singlePart.exam.id ? (
+                        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[var(--accent-terracotta-soft)] text-[12px]">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void handleDeleteExam(singlePart.exam.id)
+                            }
+                            className="font-medium text-[var(--accent-terracotta)] hover:underline cursor-pointer"
+                          >
+                            Confirmar
+                          </button>
+                          <span className="text-[var(--text-muted)]">·</span>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="text-[var(--text-secondary)] cursor-pointer"
+                          >
+                            Não
+                          </button>
+                        </div>
+                      ) : (
                         <button
                           type="button"
-                          onClick={() => void handleDeleteExam(exam.id)}
-                          className="font-medium text-[var(--accent-terracotta)] hover:underline cursor-pointer"
+                          onClick={() =>
+                            setConfirmDeleteId(singlePart.exam.id)
+                          }
+                          aria-label={`Excluir ${singlePart.exam.title}`}
+                          className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--accent-terracotta)] hover:bg-[var(--accent-terracotta-soft)] cursor-pointer"
                         >
-                          Confirmar
+                          <Trash size={15} weight="light" />
                         </button>
-                        <span className="text-[var(--text-muted)]">·</span>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteId(null)}
-                          className="text-[var(--text-secondary)] cursor-pointer"
-                        >
-                          Não
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(exam.id)}
-                        aria-label={`Excluir ${exam.title}`}
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--accent-terracotta)] hover:bg-[var(--accent-terracotta-soft)] cursor-pointer"
-                      >
-                        <Trash size={15} weight="light" />
-                      </button>
-                    )}
-                  </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                {/* Resumo de métricas do simulado */}
+                {/* Resumo consolidado de métricas */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-                  {/* Acertos Brutos vs Reais */}
                   <div className="p-3 rounded-xl bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60">
                     <span className="text-[11px] text-[var(--text-muted)] block">
-                      {isXray ? "Acerto Bruto vs Real" : "Acertos Brutos"}
+                      {group.hasDetailedQuestions
+                        ? "Acerto Bruto vs Real"
+                        : "Acertos Brutos"}
                     </span>
-                    {isXray ? (
+                    {group.hasDetailedQuestions ? (
                       <p className="font-mono-tabular text-[15px] text-[var(--text-primary)] mt-0.5">
-                        <strong>{xrayRaw}</strong>{" "}
+                        <strong>{group.rawCorrect}</strong>{" "}
                         <span className="text-[12px] text-[var(--text-muted)]">
                           bruto
                         </span>{" "}
                         ·{" "}
                         <strong className="text-[var(--accent-sage)]">
-                          {xrayReal}
+                          {group.realCorrect}
                         </strong>{" "}
                         <span className="text-[12px] text-[var(--accent-sage)]">
                           real
@@ -488,65 +493,114 @@ export function SimuladosWorkspace() {
                       </p>
                     ) : (
                       <p className="font-mono-tabular text-[15px] font-medium text-[var(--text-primary)] mt-0.5">
-                        {hasExpressScores ? `${expressRawTotal} acertos` : "—"}
+                        {hasAnyScore ? `${group.rawCorrect} acertos` : "—"}
                       </p>
                     )}
                   </div>
 
-                  {/* Por área */}
                   <div className="p-3 rounded-xl bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60">
                     <span className="text-[11px] text-[var(--text-muted)] block">
                       Áreas (LC · CH · CN · MT)
                     </span>
                     <p className="font-mono-tabular text-[13px] text-[var(--text-primary)] mt-1">
                       {[
-                        exam.score_lc ?? "–",
-                        exam.score_ch ?? "–",
-                        exam.score_cn ?? "–",
-                        exam.score_mt ?? "–",
+                        group.scoresByArea.score_lc ?? "–",
+                        group.scoresByArea.score_ch ?? "–",
+                        group.scoresByArea.score_cn ?? "–",
+                        group.scoresByArea.score_mt ?? "–",
                       ].join(" · ")}
                     </p>
                   </div>
 
-                  {/* TRI */}
                   <div className="p-3 rounded-xl bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60">
                     <span className="text-[11px] text-[var(--text-muted)] block">
                       Média TRI
                     </span>
-                    {(() => {
-                      const tris = [
-                        exam.tri_lc,
-                        exam.tri_ch,
-                        exam.tri_cn,
-                        exam.tri_mt,
-                      ].filter((v): v is number => v !== null);
-                      if (tris.length === 0) {
-                        return (
-                          <p className="font-mono-tabular text-[13.5px] text-[var(--text-muted)] mt-0.5">
-                            Aguardando nota
-                          </p>
-                        );
-                      }
-                      const avg =
-                        tris.reduce((a, b) => a + Number(b), 0) / tris.length;
-                      return (
-                        <p className="font-mono-tabular text-[15px] font-medium text-[var(--accent-slate)] mt-0.5">
-                          {avg.toFixed(1)}
-                        </p>
-                      );
-                    })()}
+                    {tris.length === 0 ? (
+                      <p className="font-mono-tabular text-[13.5px] text-[var(--text-muted)] mt-0.5">
+                        Aguardando nota
+                      </p>
+                    ) : (
+                      <p className="font-mono-tabular text-[15px] font-medium text-[var(--accent-slate)] mt-0.5">
+                        {(
+                          tris.reduce((a, b) => a + Number(b), 0) / tris.length
+                        ).toFixed(1)}
+                      </p>
+                    )}
                   </div>
 
-                  {/* Redação */}
                   <div className="p-3 rounded-xl bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60">
                     <span className="text-[11px] text-[var(--text-muted)] block">
                       Redação
                     </span>
                     <p className="font-mono-tabular text-[15px] font-medium text-[var(--text-primary)] mt-0.5">
-                      {exam.essay_total !== null ? exam.essay_total : "—"}
+                      {group.essay.essay_total !== null
+                        ? group.essay.essay_total
+                        : "—"}
                     </p>
                   </div>
                 </div>
+
+                {/* Acessos individuais por parte quando agrupado (ex: Dia 1 e Dia 2) */}
+                {group.isGrouped && (
+                  <div className="pt-3 border-t border-[var(--border-hairline)] flex flex-wrap items-center gap-2">
+                    {group.parts.map((part) => (
+                      <div
+                        key={part.exam.id}
+                        className="inline-flex items-center gap-1 rounded-[10px] border border-[var(--border-hairline)] bg-[var(--bg-subtle)]/70 p-1"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (part.exam.mode === "xray") {
+                              setActiveXrayInitialGrid(undefined);
+                              setActiveXrayExamId(part.exam.id);
+                            } else {
+                              setEditingExpressExam(part.exam);
+                              setExpressModalOpen(true);
+                            }
+                          }}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--accent-sage-soft)] text-[12px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-sage)] transition-colors cursor-pointer"
+                        >
+                          <span>{part.shortLabel}</span>
+                          <ArrowRight size={13} weight="light" />
+                        </button>
+
+                        {confirmDeleteId === part.exam.id ? (
+                          <div className="flex items-center gap-1 px-2 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleDeleteExam(part.exam.id)
+                              }
+                              className="font-medium text-[var(--accent-terracotta)] hover:underline cursor-pointer"
+                            >
+                              Excluir
+                            </button>
+                            <span className="text-[var(--text-muted)]">·</span>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="text-[var(--text-secondary)] cursor-pointer"
+                            >
+                              Não
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(part.exam.id)}
+                            aria-label={`Excluir ${part.shortLabel}`}
+                            title={`Excluir ${part.shortLabel}`}
+                            className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--accent-terracotta)] hover:bg-[var(--accent-terracotta-soft)] cursor-pointer"
+                          >
+                            <Trash size={13} weight="light" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </article>
             );
           })}
