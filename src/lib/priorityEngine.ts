@@ -9,6 +9,12 @@ import {
   type Subject,
   type Topic,
 } from "@/types/database";
+import {
+  computeAutoModeScore,
+  DEFAULT_AUTO_MODE_URGENCY_WEIGHT,
+  DEFAULT_FSRS_TARGET_RETENTION,
+  getTopicMemorySnapshot,
+} from "@/lib/fsrsEngine";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -19,6 +25,8 @@ export interface PriorityEngineInput {
   weights?: PriorityWeights;
   halfLifeDays?: number;
   smoothingC?: number;
+  targetRetention?: number;
+  autoModeUrgencyWeight?: number;
   referenceDate?: Date;
   subjects?: Subject[];
   topics?: Topic[];
@@ -32,7 +40,8 @@ export interface PriorityMetric {
   secondaryLabel?: string;
   subjectId?: string | null;
   area?: string;
-  urgencyScore: number; // Normalizado 0..100
+  urgencyScore: number; // U ∈ [0, 100]
+  autoScore: number; // Score combinado Modo Automático ∈ [0, 100]
   rawUrgency: number;
   totalQuestions: number;
   rawCorrect: number;
@@ -47,6 +56,14 @@ export interface PriorityMetric {
   errorAttention: number;
   errorOther: number;
   lastActivityDate: string | null;
+  // Dados de memória FSRS (apenas para assuntos)
+  retrievability: number | null;
+  retrievabilityPct: number | null;
+  stabilityDays: number;
+  dueIso: string | null;
+  daysUntilDue: number | null;
+  isDueForReview: boolean;
+  dueStatusLabel: string;
 }
 
 export interface OverallPerformanceSummary {
@@ -66,7 +83,9 @@ export interface OverallPerformanceSummary {
 }
 
 export interface PriorityEngineResult {
-  topicPriorities: PriorityMetric[];
+  topicPriorities: PriorityMetric[]; // Ordenado por Urgência de Domínio U (Incêndios)
+  dueReviews: PriorityMetric[]; // Assuntos que precisam de revisão (R < alvo ou due <= hoje)
+  autoPriorities: PriorityMetric[]; // Ordenado por autoScore (Modo Automático)
   enemSkillPriorities: PriorityMetric[];
   overallSummary: OverallPerformanceSummary;
   maxActiveWeight: number;
@@ -138,19 +157,12 @@ function toUtcMidnightMs(dateInput: string | Date): number {
   );
 }
 
-/**
- * Calcula quantos dias se passaram entre `dateStr` (YYYY-MM-DD) e `referenceDate`.
- */
 export function computeDaysAgo(dateStr: string, referenceDate: Date): number {
   const refMs = toUtcMidnightMs(referenceDate);
   const itemMs = toUtcMidnightMs(dateStr);
   return Math.max(0, (refMs - itemMs) / MS_PER_DAY);
 }
 
-/**
- * Decaimento exponencial por meia-vida:
- * decay = 0.5 ^ (daysAgo / halfLifeDays)
- */
 export function computeTemporalDecay(
   daysAgo: number,
   halfLifeDays: number
@@ -245,9 +257,11 @@ function accumulateExerciseLog(
   const gap = Math.max(0, log.error_gap_count);
   const attention = Math.max(0, log.error_attention_count);
   const other = Math.max(0, log.error_other_count);
-  const unclassifiedErrors = Math.max(0, totalErrors - (gap + attention + other));
+  const unclassifiedErrors = Math.max(
+    0,
+    totalErrors - (gap + attention + other)
+  );
 
-  // Nos exercise_logs, chutes usam o peso do Chute Nível 2 (médio)
   const logWeightSum =
     realCorrect * weights.real_correct +
     guesses * weights.guess_2 +
@@ -281,7 +295,11 @@ function finalizeMetric(
     secondaryLabel?: string;
     subjectId?: string | null;
     area?: string;
-  }
+    topic?: Topic;
+  },
+  targetRetention: number,
+  autoModeUrgencyWeight: number,
+  referenceDate: Date
 ): PriorityMetric {
   const safeC = Math.max(0, smoothingC);
   const denominator = acc.decaySum + safeC;
@@ -294,6 +312,25 @@ function finalizeMetric(
   const guessesTotal =
     acc.guessesLevel1 + acc.guessesLevel2 + acc.guessesLevel3;
 
+  const memory =
+    acc.kind === "topic" && meta.topic
+      ? getTopicMemorySnapshot(meta.topic, targetRetention, referenceDate)
+      : {
+          retrievability: null,
+          retrievabilityPct: null,
+          stabilityDays: 0,
+          dueIso: null,
+          daysUntilDue: null,
+          isDueForReview: false,
+          dueStatusLabel: "Sem prática registrada",
+        };
+
+  const autoScore = computeAutoModeScore(
+    urgencyScore,
+    memory.retrievability,
+    autoModeUrgencyWeight
+  );
+
   return {
     id: acc.id,
     kind: acc.kind,
@@ -302,6 +339,7 @@ function finalizeMetric(
     subjectId: meta.subjectId,
     area: meta.area,
     urgencyScore,
+    autoScore,
     rawUrgency: Math.round(rawUrgency * 1000) / 1000,
     totalQuestions: acc.totalQuestions,
     rawCorrect: acc.rawCorrect,
@@ -316,14 +354,18 @@ function finalizeMetric(
     errorAttention: acc.errorAttention,
     errorOther: acc.errorOther,
     lastActivityDate: acc.lastActivityDate,
+    retrievability: memory.retrievability,
+    retrievabilityPct: memory.retrievabilityPct,
+    stabilityDays: memory.stabilityDays,
+    dueIso: memory.dueIso,
+    daysUntilDue: memory.daysUntilDue,
+    isDueForReview: memory.isDueForReview,
+    dueStatusLabel: memory.dueStatusLabel,
   };
 }
 
 /**
- * Motor matemático puro de prioridades do Cadernin.
- *
- * - Assuntos: combina `exercise_logs` + `mock_questions` com `topic_id`.
- * - Habilidades ENEM: utiliza EXCLUSIVAMENTE `mock_questions` com `enem_skill_id`.
+ * Motor matemático puro de prioridades + integração FSRS do Cadernin.
  */
 export function calculatePriorities(
   input: PriorityEngineInput
@@ -331,6 +373,9 @@ export function calculatePriorities(
   const weights = input.weights ?? DEFAULT_PRIORITY_WEIGHTS;
   const halfLifeDays = Math.max(1, input.halfLifeDays ?? 30);
   const smoothingC = Math.max(0, input.smoothingC ?? 3);
+  const targetRetention = input.targetRetention ?? DEFAULT_FSRS_TARGET_RETENTION;
+  const autoModeUrgencyWeight =
+    input.autoModeUrgencyWeight ?? DEFAULT_AUTO_MODE_URGENCY_WEIGHT;
   const referenceDate = input.referenceDate ?? new Date();
   const maxActiveWeight = getMaxActiveWeight(weights);
 
@@ -376,8 +421,9 @@ export function calculatePriorities(
     return acc;
   };
 
-  // 1. Processa listas de exercícios (somente Assuntos + resumo geral)
+  // 1. Listas de exercícios
   for (const log of input.exerciseLogs) {
+    if (!log.total_questions || log.total_questions <= 0) continue;
     const daysAgo = computeDaysAgo(log.date, referenceDate);
     const decay = computeTemporalDecay(daysAgo, halfLifeDays);
 
@@ -389,7 +435,7 @@ export function calculatePriorities(
     }
   }
 
-  // 2. Processa questões de simulados Raio-X (Assuntos + Habilidades ENEM + resumo geral)
+  // 2. Questões de simulados Raio-X
   const fallbackTodayStr = referenceDate.toISOString().slice(0, 10);
 
   for (const q of input.mockQuestions) {
@@ -410,17 +456,42 @@ export function calculatePriorities(
     }
   }
 
-  // 3. Finaliza e ordena Assuntos
-  const topicPriorities: PriorityMetric[] = Array.from(topicAccMap.values())
-    .map((acc) => {
+  // Inclui também assuntos que tenham estado FSRS salvo (mesmo sem logs recentes carregados)
+  for (const topic of input.topics ?? []) {
+    if (
+      topic.fsrs_last_review &&
+      Number(topic.fsrs_stability ?? 0) > 0 &&
+      !topicAccMap.has(topic.id)
+    ) {
+      topicAccMap.set(topic.id, createAccumulator(topic.id, "topic"));
+    }
+  }
+
+  // 3. Finaliza Assuntos
+  const allTopicMetrics: PriorityMetric[] = Array.from(topicAccMap.values()).map(
+    (acc) => {
       const topic = topicById.get(acc.id);
       const subject = topic ? subjectById.get(topic.subject_id) : undefined;
-      return finalizeMetric(acc, smoothingC, maxActiveWeight, {
-        label: topic?.name ?? "Assunto",
-        secondaryLabel: subject?.name,
-        subjectId: topic?.subject_id ?? null,
-      });
-    })
+      return finalizeMetric(
+        acc,
+        smoothingC,
+        maxActiveWeight,
+        {
+          label: topic?.name ?? "Assunto",
+          secondaryLabel: subject?.name,
+          subjectId: topic?.subject_id ?? null,
+          topic,
+        },
+        targetRetention,
+        autoModeUrgencyWeight,
+        referenceDate
+      );
+    }
+  );
+
+  // Ranking Incêndios (Urgência de Domínio U)
+  const topicPriorities = [...allTopicMetrics]
+    .filter((m) => m.totalQuestions > 0)
     .sort(
       (a, b) =>
         b.urgencyScore - a.urgencyScore ||
@@ -428,15 +499,45 @@ export function calculatePriorities(
         b.totalQuestions - a.totalQuestions
     );
 
-  // 4. Finaliza e ordena Habilidades ENEM
-  const enemSkillPriorities: PriorityMetric[] = Array.from(skillAccMap.values())
+  // Ranking Revisões (R < targetRetention ou due <= hoje), mais críticos/atrasados primeiro
+  const dueReviews = [...allTopicMetrics]
+    .filter((m) => m.isDueForReview)
+    .sort((a, b) => {
+      const rA = a.retrievability ?? 1;
+      const rB = b.retrievability ?? 1;
+      if (Math.abs(rA - rB) > 0.005) return rA - rB;
+      const dA = a.daysUntilDue ?? 9999;
+      const dB = b.daysUntilDue ?? 9999;
+      return dA - dB;
+    });
+
+  // Ranking Modo Automático (Lacunas + Revisões)
+  const autoPriorities = [...allTopicMetrics].sort(
+    (a, b) =>
+      b.autoScore - a.autoScore ||
+      b.urgencyScore - a.urgencyScore ||
+      (a.retrievability ?? 1) - (b.retrievability ?? 1)
+  );
+
+  // 4. Finaliza Habilidades ENEM (exclusivamente de mock_questions com enem_skill_id)
+  const enemSkillPriorities: PriorityMetric[] = Array.from(
+    skillAccMap.values()
+  )
     .map((acc) => {
       const skill = skillById.get(acc.id);
-      return finalizeMetric(acc, smoothingC, maxActiveWeight, {
-        label: skill ? `${skill.code} · ${skill.competency}` : "Habilidade",
-        secondaryLabel: skill?.description,
-        area: skill?.area,
-      });
+      return finalizeMetric(
+        acc,
+        smoothingC,
+        maxActiveWeight,
+        {
+          label: skill ? `${skill.code} · ${skill.competency}` : "Habilidade",
+          secondaryLabel: skill?.description,
+          area: skill?.area,
+        },
+        targetRetention,
+        autoModeUrgencyWeight,
+        referenceDate
+      );
     })
     .sort(
       (a, b) =>
@@ -476,6 +577,8 @@ export function calculatePriorities(
 
   return {
     topicPriorities,
+    dueReviews,
+    autoPriorities,
     enemSkillPriorities,
     overallSummary,
     maxActiveWeight,

@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import {
+  Brain,
   Database,
   GraduationCap,
   SlidersHorizontal,
@@ -9,11 +10,12 @@ import {
 } from "@phosphor-icons/react";
 import { ProfileAppearanceTab } from "@/components/configuracoes/ProfileAppearanceTab";
 import { PriorityWeightsTab } from "@/components/configuracoes/PriorityWeightsTab";
+import { FsrsCalibrationTab } from "@/components/configuracoes/FsrsCalibrationTab";
 import { EnemMatrixTab } from "@/components/configuracoes/EnemMatrixTab";
 import { BackupTab } from "@/components/configuracoes/BackupTab";
 import { useProfileTheme } from "@/components/providers/ProfileThemeProvider";
 
-type SettingsTabId = "profile" | "weights" | "enem" | "backup";
+type SettingsTabId = "profile" | "weights" | "reviews" | "enem" | "backup";
 
 const SETTINGS_TABS: {
   id: SettingsTabId;
@@ -25,6 +27,7 @@ const SETTINGS_TABS: {
 }[] = [
   { id: "profile", label: "Perfil & Aparência", icon: UserCircle },
   { id: "weights", label: "Pesos de Prioridade", icon: SlidersHorizontal },
+  { id: "reviews", label: "Revisões Espaçadas", icon: Brain },
   { id: "enem", label: "Matriz ENEM", icon: GraduationCap },
   { id: "backup", label: "Backup JSON", icon: Database },
 ];
@@ -78,6 +81,7 @@ export default function ConfiguracoesPage() {
       <div>
         {activeTab === "profile" && <ProfileAppearanceTab />}
         {activeTab === "weights" && <PriorityWeightsTab />}
+        {activeTab === "reviews" && <FsrsCalibrationTab />}
         {activeTab === "enem" && <EnemMatrixTab />}
         {activeTab === "backup" && <BackupTab />}
       </div>

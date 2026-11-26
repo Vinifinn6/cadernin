@@ -11,6 +11,7 @@ export const BACKUP_TABLES = [
   "mock_questions",
   "study_sessions",
   "weekly_plan_items",
+  "fsrs_review_logs",
 ] as const;
 
 export type BackupTableName = (typeof BACKUP_TABLES)[number];
@@ -34,6 +35,7 @@ export const BACKUP_TABLE_LABELS: Record<BackupTableName, string> = {
   mock_questions: "Questões de simulados",
   study_sessions: "Sessões de estudo",
   weekly_plan_items: "Itens do planejador",
+  fsrs_review_logs: "Histórico de revisões",
 };
 
 function requireSupabase() {
@@ -53,6 +55,13 @@ export async function exportFullBackup(
     BACKUP_TABLES.map(async (table) => {
       const { data, error } = await supabase.from(table).select("*");
       if (error) {
+        // Se fsrs_review_logs ainda não foi criada via migração, exporta vazio sem quebrar o backup
+        if (
+          table === "fsrs_review_logs" &&
+          error.message.includes("does not exist")
+        ) {
+          return [table, [] as Record<string, unknown>[]] as const;
+        }
         throw new Error(`Erro ao ler tabela ${table}: ${error.message}`);
       }
       return [table, (data ?? []) as Record<string, unknown>[]] as const;
@@ -68,7 +77,7 @@ export async function exportFullBackup(
   }
 
   return {
-    version: 1,
+    version: 2,
     exported_at: new Date().toISOString(),
     app_name: appName || "Cadernin",
     counts: countsMap,

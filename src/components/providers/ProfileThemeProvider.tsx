@@ -62,6 +62,10 @@ interface ProfileThemeContextValue {
     decay_half_life_days: number;
     smoothing_c: number;
   }) => Promise<{ ok: boolean; errorMessage?: string }>;
+  updateFsrsSettings: (params: {
+    fsrs_target_retention: number;
+    auto_mode_urgency_weight: number;
+  }) => Promise<{ ok: boolean; errorMessage?: string }>;
   uploadProfileImage: (kind: ProfileImageKind, file: File) => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -284,6 +288,30 @@ export function ProfileThemeProvider({
     [profile]
   );
 
+  const updateFsrsSettings = useCallback(
+    async (params: {
+      fsrs_target_retention: number;
+      auto_mode_urgency_weight: number;
+    }) => {
+      const res = await saveUserProfilePatch(profile, {
+        fsrs_target_retention: Math.min(
+          0.95,
+          Math.max(0.8, Math.round(params.fsrs_target_retention * 100) / 100)
+        ),
+        auto_mode_urgency_weight: Math.min(
+          1,
+          Math.max(0, Math.round(params.auto_mode_urgency_weight * 100) / 100)
+        ),
+      });
+      setProfile(res.profile);
+      return {
+        ok: res.synced || !isSupabaseConfigured(),
+        errorMessage: res.errorMessage,
+      };
+    },
+    [profile]
+  );
+
   const uploadProfileImage = useCallback(
     async (kind: ProfileImageKind, file: File) => {
       const label = kind === "avatar" ? "Foto de perfil" : "Capa do cabeçalho";
@@ -375,6 +403,7 @@ export function ProfileThemeProvider({
       updateSubtitle,
       updateDailyGoalMinutes,
       updatePrioritySettings,
+      updateFsrsSettings,
       uploadProfileImage,
       refreshProfile,
     }),
@@ -393,6 +422,7 @@ export function ProfileThemeProvider({
       updateSubtitle,
       updateDailyGoalMinutes,
       updatePrioritySettings,
+      updateFsrsSettings,
       uploadProfileImage,
       refreshProfile,
     ]

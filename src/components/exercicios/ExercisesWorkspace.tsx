@@ -2,8 +2,10 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowRight,
+  ArrowsClockwise,
   Check,
   MagnifyingGlass,
   Minus,
@@ -22,10 +24,12 @@ import {
   fetchExerciseLogs,
   updateExerciseLog,
 } from "@/lib/exercises-service";
+import { syncTopicFsrsState } from "@/lib/fsrs-service";
 import {
   SearchableCombobox,
   type ComboboxOption,
 } from "@/components/shared/SearchableCombobox";
+import { useProfileTheme } from "@/components/providers/ProfileThemeProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { ListRowsSkeleton } from "@/components/shared/EditorialSkeleton";
 import type { ExerciseLog, Subject, Subtopic, Topic } from "@/types/database";
@@ -45,7 +49,13 @@ function formatDatePtBr(iso: string): string {
 }
 
 export function ExercisesWorkspace() {
+  const { profile } = useProfileTheme();
   const { showToast } = useToast();
+  const searchParams = useSearchParams();
+  const querySubjectId = searchParams.get("subjectId");
+  const queryTopicId = searchParams.get("topicId");
+  const isReviewPrefill = searchParams.get("review") === "1";
+
   const [logs, setLogs] = useState<ExerciseLog[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -101,6 +111,21 @@ export function ExercisesWorkspace() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  // Pré-preenche Matéria + Assunto quando o usuário chega pelo botão "Revisar" da Home
+  useEffect(() => {
+    if (queryTopicId && topics.length > 0) {
+      const foundTopic = topics.find((t) => t.id === queryTopicId);
+      if (foundTopic) {
+        setSubjectId(querySubjectId || foundTopic.subject_id);
+        setTopicId(foundTopic.id);
+        setSubtopicId(null);
+      }
+    } else if (querySubjectId && subjects.length > 0) {
+      const foundSubj = subjects.find((s) => s.id === querySubjectId);
+      if (foundSubj) setSubjectId(foundSubj.id);
+    }
+  }, [querySubjectId, queryTopicId, topics, subjects]);
 
   // Mapas de consulta rápida
   const subjectMap = useMemo(
@@ -305,19 +330,25 @@ export function ExercisesWorkspace() {
       };
 
       if (editingId) {
+        const previousTopicId = logs.find((l) => l.id === editingId)?.topic_id;
         const updated = await updateExerciseLog(editingId, payload);
         setLogs((prev) =>
           prev.map((item) => (item.id === updated.id ? updated : item))
         );
+        void syncTopicFsrsState(updated.topic_id, profile.fsrs_target_retention);
+        if (previousTopicId && previousTopicId !== updated.topic_id) {
+          void syncTopicFsrsState(previousTopicId, profile.fsrs_target_retention);
+        }
         resetForm(true);
-        setSuccessMsg("Bateria atualizada com sucesso.");
-        showToast("Bateria de exercícios atualizada.");
+        setSuccessMsg("Bateria atualizada e memória de revisão sincronizada.");
+        showToast("Bateria atualizada e revisão sincronizada.");
       } else {
         const created = await createExerciseLog(payload);
         setLogs((prev) => [created, ...prev]);
+        void syncTopicFsrsState(created.topic_id, profile.fsrs_target_retention);
         resetForm(true);
-        setSuccessMsg("Bateria registrada no histórico.");
-        showToast("Bateria registrada no histórico.");
+        setSuccessMsg("Bateria registrada e memória de revisão atualizada.");
+        showToast("Bateria registrada e memória atualizada.");
       }
 
       setTimeout(() => setSuccessMsg(null), 3200);
@@ -331,11 +362,15 @@ export function ExercisesWorkspace() {
   };
 
   const handleDeleteLog = async (id: string) => {
+    const removed = logs.find((item) => item.id === id);
     setLogs((prev) => prev.filter((item) => item.id !== id));
     setConfirmDeleteId(null);
     if (editingId === id) resetForm(true);
     try {
       await deleteExerciseLog(id);
+      if (removed?.topic_id) {
+        void syncTopicFsrsState(removed.topic_id, profile.fsrs_target_retention);
+      }
       showToast("Registro excluído.", "info");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao excluir registro.");
@@ -394,6 +429,21 @@ export function ExercisesWorkspace() {
           motivo de cada erro.
         </p>
       </header>
+
+      {/* Banner de Modo Revisão quando vem do atalho da Home */}
+      {isReviewPrefill && topicId && topicMap.get(topicId) && (
+        <div className="rounded-xl px-4 py-3 bg-[var(--accent-sage-soft)] border border-[var(--accent-sage)]/30 text-[13px] text-[var(--accent-sage)] flex items-center gap-2.5">
+          <ArrowsClockwise size={17} weight="duotone" className="shrink-0" />
+          <span>
+            <strong>Revisão rápida:</strong> assunto{" "}
+            <strong className="underline underline-offset-2">
+              {topicMap.get(topicId)?.name}
+            </strong>{" "}
+            já pré-selecionado. Lance sua bateria abaixo para atualizar a
+            próxima data de revisão automaticamente.
+          </span>
+        </div>
+      )}
 
       {/* Aviso se ainda não houver matérias/assuntos no Cronograma */}
       {!loading && (subjects.length === 0 || topics.length === 0) && (

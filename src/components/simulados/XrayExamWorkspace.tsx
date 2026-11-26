@@ -33,6 +33,8 @@ import {
   updateMockExam,
   upsertMockQuestion,
 } from "@/lib/mock-exams-service";
+import { syncTopicFsrsState } from "@/lib/fsrs-service";
+import { useProfileTheme } from "@/components/providers/ProfileThemeProvider";
 import type {
   EnemArea,
   EnemSkill,
@@ -248,6 +250,7 @@ export function XrayExamWorkspace({
   onExamUpdated,
   onQuestionsChanged,
 }: XrayExamWorkspaceProps) {
+  const { profile } = useProfileTheme();
   const [gridConfig, setGridConfig] = useState<XrayGridConfig>(() => {
     const cfg =
       initialGridConfig ?? loadOrInferXrayGridConfig(exam, initialQuestions);
@@ -449,6 +452,20 @@ export function XrayExamWorkspace({
         const updatedExam = await updateMockExam(exam.id, areaScores);
         onExamUpdated(updatedExam);
 
+        // Alimenta automaticamente o motor FSRS para o assunto vinculado (sem duplicar sessões)
+        if (saved.topic_id) {
+          void syncTopicFsrsState(
+            saved.topic_id,
+            profile.fsrs_target_retention
+          );
+        }
+        if (existing?.topic_id && existing.topic_id !== saved.topic_id) {
+          void syncTopicFsrsState(
+            existing.topic_id,
+            profile.fsrs_target_retention
+          );
+        }
+
         setSaveState("saved");
       } catch (err) {
         setSaveState("error");
@@ -462,6 +479,7 @@ export function XrayExamWorkspace({
       gridConfig.slots,
       onExamUpdated,
       onQuestionsChanged,
+      profile.fsrs_target_retention,
       questionsMap,
     ]
   );
@@ -469,6 +487,7 @@ export function XrayExamWorkspace({
   const handleClearQuestion = async () => {
     if (!activeSlot || !activeQuestion) return;
     const num = activeSlot.questionNumber;
+    const prevTopicId = activeQuestion.topic_id;
     const nextMap = { ...questionsMap };
     delete nextMap[num];
     setQuestionsMap(nextMap);
@@ -482,6 +501,9 @@ export function XrayExamWorkspace({
       const areaScores = computeAreaScoresFromQuestions(remaining);
       const updatedExam = await updateMockExam(exam.id, areaScores);
       onExamUpdated(updatedExam);
+      if (prevTopicId) {
+        void syncTopicFsrsState(prevTopicId, profile.fsrs_target_retention);
+      }
       setSaveState("saved");
     } catch (err) {
       setSaveState("error");

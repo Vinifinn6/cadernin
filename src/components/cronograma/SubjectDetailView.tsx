@@ -17,6 +17,9 @@ import type {
   TopicWithSubtopics,
 } from "@/lib/curriculum-service";
 import { getSubjectIcon } from "@/lib/subject-icons";
+import { MemoryBattery } from "@/components/shared/MemoryBattery";
+import { useProfileTheme } from "@/components/providers/ProfileThemeProvider";
+import { getTopicMemorySnapshot } from "@/lib/fsrsEngine";
 import type { TopicStatus } from "@/types/database";
 
 const STATUS_META: Record<
@@ -74,6 +77,7 @@ export function SubjectDetailView({
   onRenameSubtopic,
   onDeleteSubtopic,
 }: SubjectDetailViewProps) {
+  const { profile } = useProfileTheme();
   const [newTopicName, setNewTopicName] = useState("");
   const [addingTopic, setAddingTopic] = useState(false);
 
@@ -362,6 +366,10 @@ export function SubjectDetailView({
             const isExpanded = Boolean(expandedTopics[topic.id]);
             const hasSubtopics = topic.subtopics.length > 0;
             const statusInfo = STATUS_META[topic.status];
+            const memory = getTopicMemorySnapshot(
+              topic,
+              profile.fsrs_target_retention
+            );
 
             return (
               <article
@@ -469,8 +477,15 @@ export function SubjectDetailView({
                     </div>
                   </div>
 
-                  {/* Ações à direita: Status clicável + Editar + Excluir */}
-                  <div className="flex items-center gap-2 pl-9 sm:pl-0 shrink-0">
+                  {/* Ações à direita: Bateria de Memória + Status clicável + Editar + Excluir */}
+                  <div className="flex items-center gap-2.5 pl-9 sm:pl-0 shrink-0">
+                    <MemoryBattery
+                      retrievability={memory.retrievability}
+                      due={memory.dueIso}
+                      stability={memory.stabilityDays}
+                      showPercent={memory.retrievability !== null}
+                    />
+
                     {/* Status clicável (alterna no clique) */}
                     <button
                       type="button"

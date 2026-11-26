@@ -69,6 +69,10 @@ create table if not exists public.user_profile (
   daily_goal_minutes integer not null default 240
     constraint user_profile_daily_goal_check check (daily_goal_minutes > 0),
 
+  -- Calibragem do algoritmo de Revisões Espaçadas (FSRS)
+  fsrs_target_retention numeric(4, 3) not null default 0.86,
+  auto_mode_urgency_weight numeric(4, 3) not null default 0.65,
+
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
@@ -119,6 +123,18 @@ create table if not exists public.topics (
   status text not null default 'not_started'
     constraint topics_status_check check (status in ('not_started', 'studying', 'mastered')),
   sort_order integer not null default 0,
+
+  -- Estado de memória (FSRS / Modelo DSR)
+  fsrs_stability double precision not null default 0,
+  fsrs_difficulty double precision not null default 0,
+  fsrs_elapsed_days integer not null default 0,
+  fsrs_scheduled_days integer not null default 0,
+  fsrs_reps integer not null default 0,
+  fsrs_lapses integer not null default 0,
+  fsrs_state smallint not null default 0,
+  fsrs_due timestamptz null,
+  fsrs_last_review timestamptz null,
+
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
@@ -338,6 +354,27 @@ create trigger trg_weekly_plan_items_updated_at
   for each row execute function public.set_updated_at();
 
 -- ==============================================================================
+-- 11. FSRS_REVIEW_LOGS (Histórico de revisões espaçadas)
+-- ==============================================================================
+create table if not exists public.fsrs_review_logs (
+  id uuid primary key default gen_random_uuid(),
+  topic_id uuid not null references public.topics(id) on delete cascade,
+  reviewed_at timestamptz not null default timezone('utc', now()),
+  rating smallint not null
+    constraint fsrs_review_logs_rating_check check (rating between 1 and 4),
+  source text not null default 'exercise'
+    constraint fsrs_review_logs_source_check check (source in ('exercise', 'mock', 'manual')),
+  real_accuracy numeric(5, 4) null
+    constraint fsrs_review_logs_accuracy_check check (real_accuracy is null or (real_accuracy >= 0 and real_accuracy <= 1)),
+  stability_after double precision not null default 0,
+  difficulty_after double precision not null default 0,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists idx_fsrs_review_logs_topic_date
+  on public.fsrs_review_logs (topic_id, reviewed_at desc);
+
+-- ==============================================================================
 -- ROW LEVEL SECURITY (RLS) — MODO PESSOAL (SINGLE-USER)
 -- ==============================================================================
 -- IMPORTANTE (FUTURO SUPABASE AUTH):
@@ -364,7 +401,8 @@ begin
     'mock_exams',
     'mock_questions',
     'study_sessions',
-    'weekly_plan_items'
+    'weekly_plan_items',
+    'fsrs_review_logs'
   ]
   loop
     execute format('alter table public.%I enable row level security;', tbl);

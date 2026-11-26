@@ -28,6 +28,8 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
   decay_half_life_days: 30,
   smoothing_c: 3,
   daily_goal_minutes: 240,
+  fsrs_target_retention: 0.86,
+  auto_mode_urgency_weight: 0.65,
 };
 
 export function normalizePriorityWeights(raw: unknown): PriorityWeights {
@@ -91,6 +93,18 @@ function normalizeProfile(
       typeof raw.daily_goal_minutes === "number" && raw.daily_goal_minutes > 0
         ? raw.daily_goal_minutes
         : base.daily_goal_minutes,
+    fsrs_target_retention:
+      raw.fsrs_target_retention !== undefined &&
+      raw.fsrs_target_retention !== null &&
+      Number.isFinite(Number(raw.fsrs_target_retention))
+        ? Math.min(0.95, Math.max(0.8, Number(raw.fsrs_target_retention)))
+        : base.fsrs_target_retention,
+    auto_mode_urgency_weight:
+      raw.auto_mode_urgency_weight !== undefined &&
+      raw.auto_mode_urgency_weight !== null &&
+      Number.isFinite(Number(raw.auto_mode_urgency_weight))
+        ? Math.min(1, Math.max(0, Number(raw.auto_mode_urgency_weight)))
+        : base.auto_mode_urgency_weight,
   };
 }
 
@@ -234,6 +248,8 @@ export interface SaveProfilePatch {
   daily_goal_minutes?: number;
   decay_half_life_days?: number;
   smoothing_c?: number;
+  fsrs_target_retention?: number;
+  auto_mode_urgency_weight?: number;
 }
 
 export async function saveUserProfilePatch(
@@ -272,11 +288,23 @@ export async function saveUserProfilePatch(
 
     let missingAppNameColumn = false;
 
-    // Fallback elegante: se o usuário ainda não adicionou a coluna app_name no Supabase,
-    // salva os demais campos no banco e mantém o app_name salvo no navegador sem quebrar.
-    if (error && error.message.includes("app_name")) {
-      missingAppNameColumn = true;
-      delete payload.app_name;
+    // Fallback elegante se colunas novas (app_name / fsrs_*) ainda não existirem no banco
+    if (
+      error &&
+      (error.message.includes("app_name") ||
+        error.message.includes("fsrs_target_retention") ||
+        error.message.includes("auto_mode_urgency_weight"))
+    ) {
+      if (error.message.includes("app_name")) {
+        missingAppNameColumn = true;
+        delete payload.app_name;
+      }
+      if (error.message.includes("fsrs_target_retention")) {
+        delete payload.fsrs_target_retention;
+      }
+      if (error.message.includes("auto_mode_urgency_weight")) {
+        delete payload.auto_mode_urgency_weight;
+      }
 
       if (Object.keys(payload).length > 1) {
         const retry = await supabase
@@ -289,8 +317,10 @@ export async function saveUserProfilePatch(
       } else {
         return {
           profile: updated,
-          synced: true,
-          missingAppNameColumn: true,
+          synced: false,
+          missingAppNameColumn,
+          errorMessage:
+            "Execute a migração SQL da Fase 6 no Supabase para sincronizar este ajuste na nuvem.",
         };
       }
     }

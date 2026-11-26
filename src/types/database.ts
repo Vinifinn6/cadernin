@@ -19,6 +19,8 @@ export type QuestionOutcome =
 
 export type StudySessionSource = "timer" | "manual";
 
+export type FsrsReviewSource = "exercise" | "mock" | "manual";
+
 export interface PriorityWeights {
   real_correct: number;
   error_attention: number;
@@ -51,6 +53,8 @@ export interface UserProfile {
   decay_half_life_days: number;
   smoothing_c: number;
   daily_goal_minutes: number;
+  fsrs_target_retention: number;
+  auto_mode_urgency_weight: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -71,8 +75,29 @@ export interface Topic {
   name: string;
   status: TopicStatus;
   sort_order: number;
+  fsrs_stability?: number;
+  fsrs_difficulty?: number;
+  fsrs_elapsed_days?: number;
+  fsrs_scheduled_days?: number;
+  fsrs_reps?: number;
+  fsrs_lapses?: number;
+  fsrs_state?: number;
+  fsrs_due?: string | null;
+  fsrs_last_review?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface FsrsReviewLog {
+  id: string;
+  topic_id: string;
+  reviewed_at: string;
+  rating: 1 | 2 | 3 | 4;
+  source: FsrsReviewSource;
+  real_accuracy: number | null;
+  stability_after: number;
+  difficulty_after: number;
+  created_at?: string;
 }
 
 export interface Subtopic {

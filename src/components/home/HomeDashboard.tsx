@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
+  ArrowsClockwise,
   CalendarBlank,
   CaretLeft,
   CaretRight,
@@ -17,6 +18,7 @@ import {
 } from "@phosphor-icons/react";
 import { ProfileHeroBanner } from "@/components/home/ProfileHeroBanner";
 import { useProfileTheme } from "@/components/providers/ProfileThemeProvider";
+import { MemoryBattery } from "@/components/shared/MemoryBattery";
 import {
   ConsistencyHeatmap,
   type DailyActivityData,
@@ -91,6 +93,9 @@ export function HomeDashboard() {
 
   const [quickTaskTitle, setQuickTaskTitle] = useState("");
   const [addingQuickTask, setAddingQuickTask] = useState(false);
+  const [attackTab, setAttackTab] = useState<"fires" | "reviews" | "auto">(
+    "auto"
+  );
 
   const loadDashboardData = useCallback(async () => {
     if (!isSupabaseConfigured()) return;
@@ -132,7 +137,7 @@ export function HomeDashboard() {
     [mockExams]
   );
 
-  // 1. Motor de Prioridade — Top 4 assuntos (ou habilidades ENEM se não houver assuntos)
+  // 1. Motor de Prioridade + Revisões FSRS
   const engine = useMemo(
     () =>
       calculatePriorities({
@@ -142,6 +147,8 @@ export function HomeDashboard() {
         weights: profile.priority_weights,
         halfLifeDays: profile.decay_half_life_days,
         smoothingC: profile.smoothing_c,
+        targetRetention: profile.fsrs_target_retention,
+        autoModeUrgencyWeight: profile.auto_mode_urgency_weight,
         subjects,
         topics,
         enemSkills,
@@ -153,15 +160,29 @@ export function HomeDashboard() {
       profile.priority_weights,
       profile.decay_half_life_days,
       profile.smoothing_c,
+      profile.fsrs_target_retention,
+      profile.auto_mode_urgency_weight,
       subjects,
       topics,
       enemSkills,
     ]
   );
 
-  const topUrgent = useMemo(() => {
+  const firesList = useMemo(() => {
     if (engine.topicPriorities.length > 0) {
       return engine.topicPriorities.slice(0, 4);
+    }
+    return engine.enemSkillPriorities.slice(0, 4);
+  }, [engine]);
+
+  const reviewsList = useMemo(
+    () => engine.dueReviews.slice(0, 5),
+    [engine.dueReviews]
+  );
+
+  const autoList = useMemo(() => {
+    if (engine.autoPriorities.length > 0) {
+      return engine.autoPriorities.slice(0, 4);
     }
     return engine.enemSkillPriorities.slice(0, 4);
   }, [engine]);
@@ -373,9 +394,9 @@ export function HomeDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* COLUNA ESQUERDA: Assuntos Mais Urgentes + Resumo de Ritmo */}
         <div className="lg:col-span-6 space-y-6">
-          {/* 1. ASSUNTOS MAIS URGENTES (TOP 4 DO MOTOR) */}
+          {/* 1. O QUE ATACAR HOJE (INCÊNDIOS | REVISÕES | AUTOMÁTICO) */}
           <section className="bg-[var(--bg-card)] rounded-2xl p-5 sm:p-6 border border-[var(--border-hairline)] space-y-4">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Lightning
                   size={19}
@@ -383,99 +404,332 @@ export function HomeDashboard() {
                   className="text-[var(--accent-terracotta)]"
                 />
                 <h2 className="font-editorial text-[20px] leading-tight text-[var(--text-primary)]">
-                  Assuntos Mais Urgentes
+                  O que atacar hoje
                 </h2>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] border border-[var(--border-hairline)] font-mono-tabular text-[11px] text-[var(--text-secondary)]">
-                Top 4 · Prioridade
-              </span>
-            </div>
 
-            {topUrgent.length === 0 ? (
-              <div className="p-5 rounded-xl bg-[var(--bg-subtle)]/65 border border-[var(--border-hairline)]/60 text-center space-y-2">
-                <p className="text-[13.5px] font-medium text-[var(--text-primary)]">
-                  Sua fila de prioridades ainda está vazia
-                </p>
-                <p className="text-[12.5px] text-[var(--text-secondary)] leading-relaxed">
-                  Registre listas em Exercícios ou corrija um simulado Raio-X
-                  para o motor calcular automaticamente o que revisar primeiro.
-                </p>
-                <Link
-                  href="/exercicios"
-                  className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[var(--accent-sage)] hover:underline pt-1"
-                >
-                  <span>Registrar exercícios</span>
-                  <ArrowRight size={13} weight="light" />
-                </Link>
-              </div>
-            ) : (
-              <div className="space-y-2.5">
-                {topUrgent.map((item) => {
-                  const subj = item.subjectId
-                    ? subjectMap.get(item.subjectId)
-                    : undefined;
-                  const high = item.urgencyScore >= 65;
-
+              {/* Controle segmentado: Incêndios | Revisões | Automático */}
+              <div
+                role="tablist"
+                aria-label="Modo de priorização"
+                className="inline-flex items-center p-0.5 rounded-lg bg-[var(--bg-subtle)] border border-[var(--border-hairline)] self-start sm:self-auto"
+              >
+                {(
+                  [
+                    { id: "fires", label: "Incêndios" },
+                    {
+                      id: "reviews",
+                      label:
+                        engine.dueReviews.length > 0
+                          ? `Revisões (${engine.dueReviews.length})`
+                          : "Revisões",
+                    },
+                    { id: "auto", label: "Automático" },
+                  ] as const
+                ).map((tab) => {
+                  const active = attackTab === tab.id;
                   return (
-                    <div
-                      key={item.id}
-                      className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 transition-colors flex items-center justify-between gap-3"
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setAttackTab(tab.id)}
+                      className={`px-2.5 py-1 rounded-md text-[11.5px] transition-colors cursor-pointer ${
+                        active
+                          ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-medium border border-[var(--border-hairline)]"
+                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      }`}
                     >
-                      <div className="space-y-1 min-w-0 flex-1">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span
-                            className="w-2 h-2 rounded-full shrink-0"
-                            style={{
-                              backgroundColor:
-                                subj?.color ?? "var(--accent-slate)",
-                            }}
-                          />
-                          <Link
-                            href="/cronograma"
-                            className="text-[14px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-sage)] truncate"
-                          >
-                            {item.label}
-                          </Link>
-                          {item.kind === "topic" && item.secondaryLabel && (
-                            <span className="text-[11.5px] text-[var(--text-secondary)] truncate">
-                              • {item.secondaryLabel}
-                            </span>
-                          )}
-                        </div>
-                        <p className="font-mono-tabular text-[11px] text-[var(--text-muted)]">
-                          {item.realAccuracyPct}% real · {item.totalQuestions}{" "}
-                          questões
-                          {item.errorGap > 0 ? ` · ${item.errorGap} lacunas` : ""}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span
-                          className={`px-2 py-0.5 rounded-md font-mono-tabular text-[11px] font-medium ${
-                            high
-                              ? "bg-[var(--accent-terracotta-soft)] text-[var(--accent-terracotta)]"
-                              : "bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[var(--text-secondary)]"
-                          }`}
-                        >
-                          Urgência {item.urgencyScore}
-                        </span>
-
-                        {item.kind === "topic" && (
-                          <Link
-                            href={`/planejador?subjectId=${item.subjectId ?? ""}&topicId=${item.id}&focusTimer=1`}
-                            title="Iniciar cronômetro neste assunto"
-                            aria-label={`Iniciar cronômetro em ${item.label}`}
-                            className="w-7 h-7 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--accent-sage-soft)] border border-[var(--border-hairline)] text-[var(--accent-sage)] flex items-center justify-center transition-colors"
-                          >
-                            <Play size={13} weight="duotone" />
-                          </Link>
-                        )}
-                      </div>
-                    </div>
+                      {tab.label}
+                    </button>
                   );
                 })}
               </div>
-            )}
+            </div>
+
+            {/* ABA 1: INCÊNDIOS (Maior Urgência de Domínio U) */}
+            {attackTab === "fires" &&
+              (firesList.length === 0 ? (
+                <div className="p-5 rounded-xl bg-[var(--bg-subtle)]/65 border border-[var(--border-hairline)]/60 text-center space-y-2">
+                  <p className="text-[13.5px] font-medium text-[var(--text-primary)]">
+                    Nenhum foco crítico registrado ainda
+                  </p>
+                  <p className="text-[12.5px] text-[var(--text-secondary)] leading-relaxed">
+                    Registre listas em Exercícios ou corrija um simulado Raio-X
+                    para identificar suas maiores lacunas e chutes.
+                  </p>
+                  <Link
+                    href="/exercicios"
+                    className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[var(--accent-sage)] hover:underline pt-1"
+                  >
+                    <span>Registrar exercícios</span>
+                    <ArrowRight size={13} weight="light" />
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {firesList.map((item) => {
+                    const subj = item.subjectId
+                      ? subjectMap.get(item.subjectId)
+                      : undefined;
+                    const high = item.urgencyScore >= 65;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 transition-colors flex items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{
+                                backgroundColor:
+                                  subj?.color ?? "var(--accent-slate)",
+                              }}
+                            />
+                            <Link
+                              href="/cronograma"
+                              className="text-[14px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-sage)] truncate"
+                            >
+                              {item.label}
+                            </Link>
+                            {item.kind === "topic" && item.secondaryLabel && (
+                              <span className="text-[11.5px] text-[var(--text-secondary)] truncate">
+                                • {item.secondaryLabel}
+                              </span>
+                            )}
+                          </div>
+                          <p className="font-mono-tabular text-[11px] text-[var(--text-muted)]">
+                            {item.realAccuracyPct}% real · {item.totalQuestions}{" "}
+                            questões
+                            {item.errorGap > 0
+                              ? ` · ${item.errorGap} lacunas`
+                              : ""}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`px-2 py-0.5 rounded-md font-mono-tabular text-[11px] font-medium ${
+                              high
+                                ? "bg-[var(--accent-terracotta-soft)] text-[var(--accent-terracotta)]"
+                                : "bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[var(--text-secondary)]"
+                            }`}
+                          >
+                            Urgência {item.urgencyScore}
+                          </span>
+
+                          {item.kind === "topic" && (
+                            <Link
+                              href={`/planejador?subjectId=${item.subjectId ?? ""}&topicId=${item.id}&focusTimer=1`}
+                              title="Iniciar cronômetro neste assunto"
+                              aria-label={`Iniciar cronômetro em ${item.label}`}
+                              className="w-7 h-7 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--accent-sage-soft)] border border-[var(--border-hairline)] text-[var(--accent-sage)] flex items-center justify-center transition-colors"
+                            >
+                              <Play size={13} weight="duotone" />
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+
+            {/* ABA 2: REVISÕES (Assuntos cuja memória caiu abaixo do alvo ou venceram) */}
+            {attackTab === "reviews" &&
+              (reviewsList.length === 0 ? (
+                <div className="p-5 rounded-xl bg-[var(--bg-subtle)]/65 border border-[var(--border-hairline)]/60 text-center space-y-2">
+                  <p className="text-[13.5px] font-medium text-[var(--text-primary)]">
+                    Nenhuma revisão pendente agora
+                  </p>
+                  <p className="text-[12.5px] text-[var(--text-secondary)] leading-relaxed">
+                    As revisões aparecem automaticamente aqui conforme você
+                    pratica listas de exercícios ou simulados e o momento ideal
+                    de reforçar a memória chega.
+                  </p>
+                  <Link
+                    href="/exercicios"
+                    className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[var(--accent-sage)] hover:underline pt-1"
+                  >
+                    <span>Praticar exercícios</span>
+                    <ArrowRight size={13} weight="light" />
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {reviewsList.map((item) => {
+                    const subj = item.subjectId
+                      ? subjectMap.get(item.subjectId)
+                      : undefined;
+                    const isOverdue =
+                      item.daysUntilDue !== null && item.daysUntilDue < 0;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 transition-colors flex flex-wrap sm:flex-nowrap items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{
+                                backgroundColor:
+                                  subj?.color ?? "var(--accent-sage)",
+                              }}
+                            />
+                            <span className="text-[14px] font-medium text-[var(--text-primary)] truncate">
+                              {item.label}
+                            </span>
+                            {item.secondaryLabel && (
+                              <span className="text-[11.5px] text-[var(--text-secondary)] truncate">
+                                • {item.secondaryLabel}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            <MemoryBattery
+                              retrievability={item.retrievability}
+                              due={item.dueIso}
+                              stability={item.stabilityDays}
+                              showPercent
+                            />
+                            <span
+                              className={`font-mono-tabular text-[11px] font-medium ${
+                                isOverdue
+                                  ? "text-[var(--accent-terracotta)]"
+                                  : "text-[var(--accent-ochre)]"
+                              }`}
+                            >
+                              {item.dueStatusLabel}
+                            </span>
+                          </div>
+                        </div>
+
+                        <Link
+                          href={`/exercicios?subjectId=${item.subjectId ?? ""}&topicId=${item.id}&review=1`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--accent-sage-soft)] border border-[var(--border-hairline)] hover:border-[var(--accent-sage)]/40 text-[12px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-sage)] transition-colors shrink-0"
+                        >
+                          <ArrowsClockwise size={13} weight="light" />
+                          <span>Revisar</span>
+                        </Link>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+
+            {/* ABA 3: AUTOMÁTICO (Ranking combinado Lacunas + Revisões) */}
+            {attackTab === "auto" &&
+              (autoList.length === 0 ? (
+                <div className="p-5 rounded-xl bg-[var(--bg-subtle)]/65 border border-[var(--border-hairline)]/60 text-center space-y-2">
+                  <p className="text-[13.5px] font-medium text-[var(--text-primary)]">
+                    Sua fila inteligente ainda está vazia
+                  </p>
+                  <p className="text-[12.5px] text-[var(--text-secondary)] leading-relaxed">
+                    Registre listas em Exercícios ou corrija um simulado Raio-X
+                    para combinar lacunas e revisões automaticamente.
+                  </p>
+                  <Link
+                    href="/exercicios"
+                    className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[var(--accent-sage)] hover:underline pt-1"
+                  >
+                    <span>Registrar exercícios</span>
+                    <ArrowRight size={13} weight="light" />
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {autoList.map((item) => {
+                    const subj = item.subjectId
+                      ? subjectMap.get(item.subjectId)
+                      : undefined;
+                    const high = item.autoScore >= 65;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-3.5 rounded-xl bg-[var(--bg-subtle)]/75 hover:bg-[var(--bg-subtle)] border border-[var(--border-hairline)]/60 transition-colors flex items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{
+                                backgroundColor:
+                                  subj?.color ?? "var(--accent-slate)",
+                              }}
+                            />
+                            <Link
+                              href="/cronograma"
+                              className="text-[14px] font-medium text-[var(--text-primary)] hover:text-[var(--accent-sage)] truncate"
+                            >
+                              {item.label}
+                            </Link>
+                            {item.kind === "topic" && item.secondaryLabel && (
+                              <span className="text-[11.5px] text-[var(--text-secondary)] truncate">
+                                • {item.secondaryLabel}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 font-mono-tabular text-[11px] text-[var(--text-muted)]">
+                            {item.retrievability !== null && (
+                              <MemoryBattery
+                                retrievability={item.retrievability}
+                                due={item.dueIso}
+                                stability={item.stabilityDays}
+                                showPercent
+                              />
+                            )}
+                            <span>{item.realAccuracyPct}% real</span>
+                            {item.isDueForReview && (
+                              <span className="text-[var(--accent-ochre)]">
+                                • {item.dueStatusLabel}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`px-2 py-0.5 rounded-md font-mono-tabular text-[11px] font-medium ${
+                              high
+                                ? "bg-[var(--accent-terracotta-soft)] text-[var(--accent-terracotta)]"
+                                : "bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[var(--text-secondary)]"
+                            }`}
+                          >
+                            Score {item.autoScore}
+                          </span>
+
+                          {item.kind === "topic" &&
+                            (item.isDueForReview ? (
+                              <Link
+                                href={`/exercicios?subjectId=${item.subjectId ?? ""}&topicId=${item.id}&review=1`}
+                                title="Revisar com bateria de exercícios"
+                                aria-label={`Revisar ${item.label}`}
+                                className="w-7 h-7 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--accent-sage-soft)] border border-[var(--border-hairline)] text-[var(--accent-sage)] flex items-center justify-center transition-colors"
+                              >
+                                <ArrowsClockwise size={13} weight="light" />
+                              </Link>
+                            ) : (
+                              <Link
+                                href={`/planejador?subjectId=${item.subjectId ?? ""}&topicId=${item.id}&focusTimer=1`}
+                                title="Iniciar cronômetro neste assunto"
+                                aria-label={`Iniciar cronômetro em ${item.label}`}
+                                className="w-7 h-7 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--accent-sage-soft)] border border-[var(--border-hairline)] text-[var(--accent-sage)] flex items-center justify-center transition-colors"
+                              >
+                                <Play size={13} weight="duotone" />
+                              </Link>
+                            ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
 
             <Link
               href="/estatisticas"
